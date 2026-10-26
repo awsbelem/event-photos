@@ -1,0 +1,31 @@
+{
+ "label": "Hexágonos",
+ "formats": {
+  "feed": {
+   "box": [
+    96,
+    247,
+    984,
+    1160
+   ],
+   "radius": 0,
+   "border": {
+    "width": 16,
+    "color": "#FFFFFF"
+   }
+  },
+  "story": {
+   "box": [
+    96,
+    426,
+    984,
+    1540
+   ],
+   "radius": 0,
+   "border": {
+    "width": 16,
+    "color": "#FFFFFF"
+   }
+  }
+ }
+}

@@ -1,0 +1,202 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Face search for one event's gallery (README, "Face search"). Deploy in sa-east-1, next to the
+  Rekognition collection, after the gallery stack (infra/aws-gallery.yaml) exists: this stack grants
+  that stack's publisher user the face-index permissions. The collection itself is created and
+  deleted by the CLI (and a one-time schedule), so deleting it never drifts this stack.
+
+Parameters:
+  EventSlug:
+    Type: String
+    AllowedPattern: "[a-z0-9-]{1,30}"
+    ConstraintDescription: lowercase letters, digits and hyphens, up to 30 characters
+    Description: Folder name under events/ (same as the gallery stack)
+  GalleryOrigin:
+    Type: String
+    AllowedPattern: "https://[a-z0-9.-]+"
+    Description: Gallery URL without trailing slash, e.g. https://d123.cloudfront.net (allowed CORS origin)
+  PublisherUser:
+    Type: String
+    Default: ""
+    Description: The gallery stack's publisher if it is not event-photos-<EventSlug> (same value as there)
+
+Conditions:
+  NewUser: !Equals [!Ref PublisherUser, ""]
+
+Rules:
+  SaoPauloOnly:
+    Assertions:
+      - Assert: !Equals [!Ref "AWS::Region", sa-east-1]
+        AssertDescription: Face data stays in Brazil; deploy this stack in sa-east-1.
+
+Resources:
+  RateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: k
+          AttributeType: S
+      KeySchema:
+        - AttributeName: k
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: exp
+        Enabled: true
+
+  SearchLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/event-photos-${EventSlug}-face-search
+      RetentionInDays: 7
+
+  SearchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: search-faces
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: rekognition:SearchFacesByImage
+                Resource: !Sub arn:aws:rekognition:${AWS::Region}:${AWS::AccountId}:collection/event-photos-${EventSlug}
+              - Effect: Allow  # DetectFaces is not scoped to a collection
+                Action: rekognition:DetectFaces
+                Resource: "*"
+              - Effect: Allow
+                Action: dynamodb:UpdateItem
+                Resource: !GetAtt RateTable.Arn
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt SearchLogs.Arn
+
+  # Placeholder code; `event-photos face-search <slug> enable` uploads the real function.
+  SearchFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: SearchLogs
+    Properties:
+      FunctionName: !Sub event-photos-${EventSlug}-face-search
+      Runtime: python3.13
+      Handler: index.handler
+      Role: !GetAtt SearchRole.Arn
+      Timeout: 10
+      MemorySize: 256
+      Environment:
+        Variables:
+          COLLECTION_ID: !Sub event-photos-${EventSlug}
+          THRESHOLD: "95"
+          RATE_TABLE: !Ref RateTable
+          ALLOWED_ORIGIN: !Ref GalleryOrigin
+          GLOBAL_LIMIT: "2000"  # searches an hour across all callers
+          IP_SALT: !Ref AWS::StackId  # placeholder; `face-search enable` replaces it with a random secret
+      Code:
+        ZipFile: |
+          def handler(event, context):
+              return {"statusCode": 503, "headers": {"content-type": "application/json"},
+                      "body": "{\"error\": \"Busca por rosto ainda em configuração.\"}"}
+
+  SearchUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt SearchFunction.Arn
+      AuthType: NONE
+      Cors:
+        AllowOrigins: [!Ref GalleryOrigin]
+        AllowMethods: [POST]
+        AllowHeaders: [content-type]
+        MaxAge: 3600
+
+  SearchUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SearchFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  SearchInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SearchFunction
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
+  # Assumed by the one-time EventBridge Scheduler schedule that deletes the collection.
+  DeleteRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: delete-collection
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: rekognition:DeleteCollection
+                Resource: !Sub arn:aws:rekognition:${AWS::Region}:${AWS::AccountId}:collection/event-photos-${EventSlug}
+
+  # Attached to the gallery stack's publisher user, so one access key runs the whole flow. A managed
+  # policy: the user's inline policies share a 2048-byte limit that the gallery stack already uses.
+  PublisherFacesPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub event-photos-${EventSlug}-faces
+      Users: [!If [NewUser, !Sub "event-photos-${EventSlug}", !Ref PublisherUser]]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - rekognition:CreateCollection
+              - rekognition:DescribeCollection
+              - rekognition:IndexFaces
+              - rekognition:DeleteFaces
+              - rekognition:ListFaces
+              - rekognition:DeleteCollection
+            Resource: !Sub arn:aws:rekognition:${AWS::Region}:${AWS::AccountId}:collection/event-photos-${EventSlug}
+          - Effect: Allow  # face counts for the review
+            Action: rekognition:DetectFaces
+            Resource: "*"
+          - Effect: Allow
+            Action: [lambda:UpdateFunctionCode, lambda:UpdateFunctionConfiguration, lambda:GetFunction]
+            Resource: !GetAtt SearchFunction.Arn
+          - Effect: Allow
+            Action: [scheduler:CreateSchedule, scheduler:UpdateSchedule, scheduler:DeleteSchedule, scheduler:GetSchedule]
+            Resource: !Sub arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/event-photos-${EventSlug}-faces-*
+          - Effect: Allow
+            Action: iam:PassRole
+            Resource: !GetAtt DeleteRole.Arn
+            Condition:
+              StringEquals:
+                iam:PassedToService: scheduler.amazonaws.com
+          - Effect: Allow
+            Action: [cloudformation:DescribeStacks, cloudformation:DescribeStackEvents]
+            Resource: !Ref AWS::StackId
+
+Outputs:
+  SearchUrl:
+    Value: !GetAtt SearchUrl.FunctionUrl
+  SearchFunctionName:
+    Value: !Ref SearchFunction
+  CollectionId:
+    Value: !Sub event-photos-${EventSlug}
+  DeleteRoleArn:
+    Value: !GetAtt DeleteRole.Arn

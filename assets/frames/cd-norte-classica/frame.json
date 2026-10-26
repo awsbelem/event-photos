@@ -1,0 +1,31 @@
+{
+ "label": "Clássica",
+ "formats": {
+  "feed": {
+   "box": [
+    64,
+    262,
+    1016,
+    1156
+   ],
+   "radius": 28,
+   "border": {
+    "width": 6,
+    "color": "#FF9900"
+   }
+  },
+  "story": {
+   "box": [
+    64,
+    446,
+    1016,
+    1556
+   ],
+   "radius": 28,
+   "border": {
+    "width": 6,
+    "color": "#FF9900"
+   }
+  }
+ }
+}

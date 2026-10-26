@@ -1,0 +1,33 @@
+{
+  "source": "Kit de marca do Estúdio de Posts CD Norte (assets extraídos do index.html exportado)",
+  "colors": {
+    "ameixa": {"hex": "#42314B", "use": "Fundo de todas as artes"},
+    "lavanda": {"hex": "#694D82", "use": "Cartões e blocos de conteúdo"},
+    "laranja_aws": {"hex": "#FF9900", "use": "Títulos, rótulos, local"},
+    "branco": {"hex": "#FFFFFF", "use": "Texto corrido, cartão de apoiador"},
+    "roxo_profundo": {"hex": "#431F73", "use": "Detalhes do calendário"},
+    "lilas": {"hex": "#A6A6E6", "use": "Mapa (a 9%) e texto de apoio"},
+    "por_do_sol": {"from": "#FF4353", "to": "#FFD29A", "use": "Manchetes e numerais"},
+    "brasa": {"from": "#EB4B3F", "to": "#F0945B", "use": "Botões e barra do calendário"},
+    "rosa_workshop": {"hex": "#F0609A", "use": "Selo de workshop"},
+    "pessego": {"hex": "#FFD29A", "use": "Selo de comunidade e exposições"}
+  },
+  "type": {
+    "section_title": "Plex Sans Bold 60, caixa alta, +4",
+    "headline": "Plex Sans Light 80, degradê pôr do sol, destaque Bold branco",
+    "talk_title": "Plex Sans Bold 34, caixa alta, +3",
+    "body": "Plex Sans Regular 36, entrelinha 60",
+    "label": "Plex Sans Bold 22 a 28, laranja",
+    "countdown": "Permanent Marker, degradê"
+  },
+  "rules": [
+    "Logo no topo, centralizado: sempre o primeiro elemento lido; largura de cerca de metade da arte, com respiro de 56 px no topo",
+    "Hexágonos em cantos opostos: topo esquerdo com base direita; em artes com bastante texto, só o do topo",
+    "Laranja para chamar, branco para ler",
+    "Um degradê por arte",
+    "Mapa só como textura: silhueta da Região Norte em lilás a 9%, atrás de manchetes e contagens, nunca atrás de fotos"
+  ],
+  "handle": "@awscommunitydaynorte",
+  "place_date": "Faci Wyden • 31.10.2026",
+  "site": "awscommunityday.com.br/norte"
+}

@@ -1,0 +1,271 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Event photo gallery: private S3 bucket served only through CloudFront, an upload inbox
+  where invited photographers send their photos (a Lambda URL hands out one-file upload
+  permissions), and an IAM user that can do nothing but publish this gallery and collect
+  the inbox. One stack per event; deleting the stack (after emptying both buckets) takes
+  everything down.
+
+Parameters:
+  EventSlug:
+    Type: String
+    AllowedPattern: "[a-z0-9-]{1,30}"
+    ConstraintDescription: lowercase letters, digits and hyphens, up to 30 characters
+    Description: Folder name under events/ (e.g. aws-community-day-belem-2026)
+  PublisherUser:
+    Type: String
+    Default: ""
+    Description: >-
+      Existing IAM user to grant this gallery to (e.g. another event's publisher), so one access key
+      serves several events. Empty creates the user event-photos-<EventSlug>.
+
+Conditions:
+  NewUser: !Equals [!Ref PublisherUser, ""]
+
+Resources:
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub event-photos-${AWS::AccountId}-${EventSlug}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  OriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub event-photos-${EventSlug}
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # Same headers the Cloudflare build writes to _headers: out of search engines, no referrer, no framing.
+  HeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub event-photos-${EventSlug}
+        CustomHeadersConfig:
+          Items:
+            - Header: X-Robots-Tag
+              Value: noindex, nofollow
+              Override: true
+        SecurityHeadersConfig:
+          ReferrerPolicy:
+            ReferrerPolicy: no-referrer
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          FrameOptions:  # the camera and consent dialog must not be framed by another site
+            FrameOption: DENY
+            Override: true
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 31536000
+            Override: true
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub event-photos ${EventSlug}
+        DefaultRootObject: index.html
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_All  # includes the South America edges (Fortaleza, São Paulo)
+        Origins:
+          - Id: site
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt OriginAccessControl.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: site
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # Managed-CachingOptimized (honors Cache-Control)
+          ResponseHeadersPolicyId: !Ref HeadersPolicy
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CloudFrontReadsOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub ${SiteBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}
+
+  # Photographers' uploads land here; the photographer's desktop pulls them (it is never reachable).
+  InboxBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub event-photos-${AWS::AccountId}-${EventSlug}-inbox
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods: [POST]
+            AllowedOrigins: ["*"]  # the signed upload form is the credential, not the origin
+            AllowedHeaders: ["*"]
+            MaxAge: 3600
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-uploads
+            Status: Enabled
+            Prefix: incoming/
+            ExpirationInDays: 30
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+
+  InboxRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: sign-uploads
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub arn:aws:s3:::event-photos-${AWS::AccountId}-${EventSlug}-inbox/incoming/*
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub arn:aws:s3:::event-photos-${AWS::AccountId}-${EventSlug}-inbox/_config/*
+
+  # Placeholder code; `event-photos inbox <slug> deploy` uploads the real page and signer.
+  InboxFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub event-photos-${EventSlug}-inbox
+      Runtime: python3.13
+      Handler: index.handler
+      Role: !GetAtt InboxRole.Arn
+      Timeout: 10
+      MemorySize: 256
+      Environment:
+        Variables:
+          INBOX_BUCKET: !Sub event-photos-${AWS::AccountId}-${EventSlug}-inbox
+      Code:
+        ZipFile: |
+          def handler(event, context):
+              return {"statusCode": 503, "headers": {"content-type": "text/plain; charset=utf-8"},
+                      "body": "Envio de fotos ainda em configuração."}
+
+  InboxUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt InboxFunction.Arn
+      AuthType: NONE
+
+  InboxUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref InboxFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  InboxInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref InboxFunction
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
+  Publisher:
+    Type: AWS::IAM::User
+    Condition: NewUser
+    Properties:
+      UserName: !Sub event-photos-${EventSlug}
+
+  # Managed, not inline: an existing user's inline policies share a 2048-byte limit.
+  PublishPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub event-photos-${EventSlug}-gallery
+      Users: [!If [NewUser, !Ref Publisher, !Ref PublisherUser]]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: s3:ListBucket
+            Resource: !GetAtt SiteBucket.Arn
+          - Effect: Allow
+            Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+            Resource: !Sub ${SiteBucket.Arn}/*
+          - Effect: Allow
+            Action: [cloudfront:CreateInvalidation, cloudfront:GetInvalidation]
+            Resource: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}
+          - Effect: Allow
+            Action: [cloudformation:DescribeStacks, cloudformation:DescribeStackEvents]
+            Resource: !Ref AWS::StackId
+          - Effect: Allow
+            Action: s3:ListBucket
+            Resource: !GetAtt InboxBucket.Arn
+          - Effect: Allow
+            Action: [s3:GetObject, s3:DeleteObject]
+            Resource: !Sub ${InboxBucket.Arn}/*
+          - Effect: Allow
+            Action: s3:PutObject
+            Resource: !Sub ${InboxBucket.Arn}/_config/*
+          - Effect: Allow
+            Action: [lambda:UpdateFunctionCode, lambda:GetFunction]
+            Resource: !GetAtt InboxFunction.Arn
+
+Outputs:
+  BucketName:
+    Value: !Ref SiteBucket
+  DistributionId:
+    Value: !Ref Distribution
+  Url:
+    Value: !Sub https://${Distribution.DomainName}
+  InboxBucketName:
+    Value: !Ref InboxBucket
+  InboxFunctionName:
+    Value: !Ref InboxFunction
+  UploadUrl:
+    Description: Page where invited photographers send their photos
+    Value: !GetAtt InboxUrl.FunctionUrl
+  PublisherUser:
+    Description: Create an access key for this user and hand it to `aws configure --profile event-photos`
+    Value: !If [NewUser, !Ref Publisher, !Ref PublisherUser]

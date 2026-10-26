@@ -1,0 +1,58 @@
+{
+  "name": "AWS Community Day Brasil — Edição Norte",
+  "date": "2026-10-31",
+  "place": "FACI Wyden · Belém/PA",
+  "photographer": "Renato Siqueira",
+  "accent": "#f28528",
+  "removal_contact": "",
+  "schedule": [
+    {
+      "time": "08:00",
+      "title": "Credenciamento"
+    },
+    {
+      "time": "09:00",
+      "title": "Abertura"
+    },
+    {
+      "time": "09:10",
+      "title": "Keynote: Vanessa Santos"
+    },
+    {
+      "time": "10:00",
+      "title": "Café da manhã"
+    },
+    {
+      "time": "12:30",
+      "title": "Intervalo para almoço"
+    },
+    {
+      "time": "13:30",
+      "title": "Retorno"
+    },
+    {
+      "time": "16:40",
+      "title": "Intervalo"
+    },
+    {
+      "time": "17:00",
+      "title": "Keynote: Marcelo Paiva"
+    },
+    {
+      "time": "17:50",
+      "title": "Encerramento"
+    }
+  ],
+  "aws_stack": "event-photos-aws-community-day-belem-2026",
+  "instagram": "awscommunitydaynorte",
+  "frames": [
+    "cd-norte-cartao",
+    "cd-norte-classica",
+    "cd-norte-hexagonos"
+  ],
+  "face_search": {
+    "enabled": false,
+    "stack": "event-photos-aws-community-day-belem-2026-faces",
+    "legal_ok": "2026-10-25"
+  }
+}

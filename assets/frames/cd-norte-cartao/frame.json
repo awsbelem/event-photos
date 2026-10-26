@@ -1,0 +1,29 @@
+{
+ "label": "Cartão",
+ "formats": {
+  "feed": {
+   "box": [
+    100,
+    257,
+    980,
+    1072
+   ],
+   "radius": 6,
+   "border": {
+    "width": 0
+   }
+  },
+  "story": {
+   "box": [
+    100,
+    462,
+    980,
+    1420
+   ],
+   "radius": 6,
+   "border": {
+    "width": 0
+   }
+  }
+ }
+}

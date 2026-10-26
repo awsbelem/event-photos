@@ -1,0 +1,17 @@
+# One-shot CLI, not a service: `docker compose run --rm --service-ports event-photos event <slug>`.
+# Limits keep a big batch from starving whatever else runs on the host.
+services:
+  event-photos:
+    build: .
+    image: event-photos:latest
+    volumes:
+      - ./events:/app/events
+      - ./out:/app/out
+      - ~/.aws:/home/app/.aws:ro
+    ports:
+      - "127.0.0.1:8766:8766"   # review page; reach it with ssh -L 8766:127.0.0.1:8766
+    mem_limit: 1536m
+    memswap_limit: 1536m
+    cpus: 1.5
+    environment:
+      EVENT_PHOTOS_WORKERS: "1"

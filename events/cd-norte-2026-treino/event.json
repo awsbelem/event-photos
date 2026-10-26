@@ -1,0 +1,21 @@
+{
+  "name": "Treino da equipe — AWS Community Day Norte",
+  "date": "2026-10-28",
+  "place": "Belém/PA",
+  "photographer": "Renato Siqueira",
+  "accent": "#f28528",
+  "removal_contact": "",
+  "instagram": "awscommunitydaynorte",
+  "frames": [
+    "cd-norte-cartao",
+    "cd-norte-classica",
+    "cd-norte-hexagonos"
+  ],
+  "aws_stack": "event-photos-cd-norte-2026-treino",
+  "face_search": {
+    "enabled": false,
+    "stack": "event-photos-cd-norte-2026-treino-faces",
+    "legal_ok": "2026-10-25",
+    "retention_days": 33
+  }
+}
