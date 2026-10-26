@@ -43,3 +43,10 @@ def test_names_cannot_end_the_script_block_and_pages_cannot_be_framed(tmp_path):
     assert html.count("</script>") == 1 and "\\u003c/script>" in html  # the block ends only where we end it
     headers = (site / "_headers").read_text()
     assert "X-Frame-Options: DENY" in headers and "frame-ancestors 'none'" in headers
+
+
+def test_tiles_are_built_in_batches_by_the_script(tmp_path):
+    html = build_gallery(run_dir(tmp_path), tmp_path / "site", dict(EVENT)).read_text()
+    assert 'class="tile"' not in html.split("<script>")[0]  # no tile markup: a page of thousands stays small
+    assert '<div class="grid"></div><div class="rest"></div>' in html and '"m":0' in html and '"w":' in html
+    assert "layout(PHOTOS)" in html and "innerHTML" not in html  # alts carry names: DOM calls only

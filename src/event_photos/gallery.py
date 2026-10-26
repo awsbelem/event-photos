@@ -240,6 +240,42 @@ def _modes(designs: list[dict]) -> str:
             + "</button></div>")
 
 
+TILE_BATCH = 60  # divides by every column count the grid uses (2 to 6), so batches end on a full row
+
+# Tiles are added a batch at a time as the visitor scrolls: a gallery of thousands of photos keeps a few hundred
+# elements on the page. The space of the tiles not built yet is reserved (tiles are square), so the scrollbar and
+# the moment chips land where the photos will be. Built with DOM calls, never innerHTML: alts carry names.
+TILES_JS = """
+const SECTIONS=[...document.querySelectorAll("main section")].map(el=>({el,grid:el.querySelector(".grid"),
+  rest:el.querySelector(".rest"),chip:document.querySelector('.chip[href="#'+el.id+'"]'),items:[],done:0}));
+let queued=false;
+function tile(p){const a=document.createElement("a"),im=document.createElement("img");
+  a.className="tile";a.href="#foto="+encodeURIComponent(p.id);a.dataset.id=p.id;
+  im.src="thumbs/"+p.id+".webp";im.width=p.w;im.height=p.h;im.loading="lazy";im.decoding="async";im.alt=p.a;
+  a.append(im);return a;}
+function reserve(s){const cs=getComputedStyle(s.grid),cols=cs.gridTemplateColumns.split(" ").length||1,
+  size=parseFloat(cs.gridTemplateColumns)||0,gap=parseFloat(cs.rowGap)||0,
+  rows=Math.ceil(s.items.length/cols)-Math.ceil(s.done/cols);
+  s.rest.style.height=rows>0?rows*(size+gap)+"px":"0";}
+/* Only while the reserved space reaches into the screen (or starts just below it). A section ending at the top of the
+   screen, under the sticky chips after a jump, waits until the visitor scrolls back up to it. */
+function near(s){const r=s.rest.getBoundingClientRect();return r.top<innerHeight*3&&r.bottom>innerHeight/4;}
+/* At most `budget` tiles per frame, so a jump deep into a long section does not freeze the phone. */
+function fill(s,budget){while(budget>0&&s.done<s.items.length&&near(s)){const f=document.createDocumentFragment();
+  s.items.slice(s.done,s.done+BATCH).forEach(p=>f.append(tile(p)));s.grid.append(f);
+  s.done=Math.min(s.items.length,s.done+BATCH);budget-=BATCH;reserve(s);}return budget;}
+function tick(){queued=false;let budget=BATCH*6;for(const s of SECTIONS)if(!s.el.hidden)budget=fill(s,budget);
+  if(budget<=0)queue();}
+function queue(){if(!queued){queued=true;requestAnimationFrame(tick);}}
+/* Shows `list` (all photos, or the face search result) in its sections, from the first tile again. */
+function layout(list){SECTIONS.forEach((s,i)=>{s.items=list.filter(p=>p.m===i);s.done=0;s.grid.replaceChildren();
+  s.el.hidden=!s.items.length;if(s.chip){s.chip.hidden=s.el.hidden;s.chip.querySelector("span").textContent=s.items.length;}
+  reserve(s);});queue();}
+addEventListener("scroll",queue,{passive:true});
+addEventListener("resize",()=>{SECTIONS.forEach(reserve);queue();});
+layout(PHOTOS);
+""".replace("BATCH", str(TILE_BATCH))
+
 FINDER_CSS = """
 .find-me{margin-top:14px;max-width:320px}
 .tile[hidden],section[hidden],.chip[hidden],.found[hidden],.finder[hidden],[data-step][hidden]{display:none}
@@ -291,17 +327,10 @@ shoot.onclick=async()=>{const w=video.videoWidth,h=video.videoHeight;if(!w)retur
     if(!PHOTOS.some(p=>ids.has(p.id))){tell(data.message||"Ainda não achamos fotos suas.");return;}
     closeDlg();filter(ids,data.note);}
   catch(e){tell("Sem conexão com a busca. Verifique a internet e tente de novo.");}};
-function filter(ids,note){VIEW=PHOTOS.filter(p=>ids.has(p.id));
-  document.querySelectorAll(".tile").forEach(t=>t.hidden=!ids.has(t.dataset.id));
-  document.querySelectorAll("main section").forEach(s=>s.hidden=!s.querySelector(".tile:not([hidden])"));
-  document.querySelectorAll(".chip").forEach(c=>{const s=document.getElementById(c.hash.slice(1)),n=c.querySelector("span");
-    n.dataset.all=n.dataset.all||n.textContent;n.textContent=s?s.querySelectorAll(".tile:not([hidden])").length:n.dataset.all;
-    c.hidden=!!(s&&s.hidden);});
+function filter(ids,note){VIEW=PHOTOS.filter(p=>ids.has(p.id));layout(VIEW);
   bar.querySelector("h2").textContent="Encontramos "+VIEW.length+(VIEW.length===1?" foto com você":" fotos com você");
   bar.querySelector("p").textContent=note||"";bar.hidden=false;bar.focus();}
-bar.querySelector(".show-all").onclick=()=>{VIEW=PHOTOS;
-  document.querySelectorAll(".tile,main section,.chip").forEach(e=>e.hidden=false);
-  document.querySelectorAll(".chip span[data-all]").forEach(n=>n.textContent=n.dataset.all);bar.hidden=true;btn.focus();};
+bar.querySelector(".show-all").onclick=()=>{VIEW=PHOTOS;layout(PHOTOS);bar.hidden=true;btn.focus();};
 document.addEventListener("keydown",e=>{if(dlg.hidden)return;if(e.key==="Escape")closeDlg();
   if(e.key==="Tab"){const f=[...dlg.querySelectorAll("button,input")].filter(el=>!el.disabled&&el.offsetParent);
     if(!f.length)return;const a=f[0],z=f[f.length-1];
@@ -346,17 +375,15 @@ def _page(event: dict, photos: list[GalleryPhoto], designs: list[dict]) -> str:
     chips = "".join(f'<a class="chip" href="#{_slug(t)}">{escape(t)} <span>{len(ps)}</span></a>'
                     for t, ps in groups.items())
     sections = []
-    for title, items in groups.items():
-        tiles = "".join(
-            f'<a class="tile" href="#foto={escape(p.id)}" data-id="{escape(p.id)}">'
-            f'<img src="thumbs/{escape(p.id)}.webp" width="{p.width}" height="{p.height}" loading="lazy" '
-            f'alt="{escape(alts[p.id])}"></a>'
-            for p in items)
+    for title in groups:
         when = f'<span class="when">{starts[title]}</span>' if title in starts else ""
         heading = "" if single else f"<h2>{when}{escape(title)}</h2>"
-        sections.append(f'<section id="{_slug(title)}">{heading}<div class="grid">{tiles}</div></section>')
+        sections.append(f'<section id="{_slug(title)}">{heading}<div class="grid"></div><div class="rest"></div></section>')
 
-    data = [{"id": p.id, "f": list(p.frames), "v": p.height > p.width, "a": alts[p.id], "c": p.by} for p in photos]
+    # Tiles are built by TILES_JS from this list ("m" = section), so the page stays small with thousands of photos.
+    section_of = {title: i for i, title in enumerate(groups)}
+    data = [{"id": p.id, "m": section_of[p.moment], "w": p.width, "h": p.height, "f": list(p.frames),
+             "v": p.height > p.width, "a": alts[p.id], "c": p.by} for p in photos]
     nav = "" if single else f'<nav aria-label="Momentos do evento"><div class="chips">{chips}</div></nav>'
     authors = sorted({p.by for p in photos if p.by}) or ([event["photographer"]] if event.get("photographer") else [])
     credit = f"Fotos: {escape(', '.join(authors))}. " if authors else ""
@@ -407,6 +434,7 @@ h2{{font-size:20px;margin:32px 8px 12px;display:flex;align-items:baseline;gap:10
 .when{{color:var(--accent);font-size:15px;font-variant-numeric:tabular-nums}}
 .grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px}}
 @media(min-width:700px){{.grid{{grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px}}}}
+.rest{{overflow-anchor:none}} /* the browser keeps the screen still by the tiles, not by the space they will fill */
 .tile{{display:block;overflow:hidden;border-radius:8px;background:var(--panel);aspect-ratio:1/1}}
 .tile img{{width:100%;height:100%;object-fit:cover;display:block;transition:transform .3s cubic-bezier(.16,1,.3,1)}}
 .tile:hover img{{transform:scale(1.03)}}
@@ -466,7 +494,7 @@ footer ol{{margin:8px 0 0;padding-left:20px;line-height:1.7}}
 <p class="sub">{where}</p>
 <p class="sub"><b>{len(photos)} fotos</b> do evento. Toque numa foto para ver, salvar ou postar.</p>{find_button}</header>
 {nav}{found_bar}
-<main>{''.join(sections)}</main>
+<main>{''.join(sections)}<noscript><p>Ative o JavaScript do navegador para ver as fotos.</p></noscript></main>
 <footer><p>{credit}Uso pessoal liberado; {mention}</p>
 <p>{removal}</p>{notice}{credits}</footer>
 <button class="to-top" aria-label="Voltar ao topo">{_icon("up")}</button>
@@ -523,7 +551,9 @@ function close(){{if(history.state&&history.state.viewer)history.back();else{{hi
 addEventListener("popstate",()=>{{const m=location.hash.match(/^#foto=(.+)$/);
   if(m&&!viewer.classList.contains("open"))open(decodeURIComponent(m[1]),false);
   else if(!m&&viewer.classList.contains("open"))hide();}});
-document.querySelectorAll(".tile").forEach(t=>t.addEventListener("click",e=>{{e.preventDefault();open(t.dataset.id,true);}}));
+{TILES_JS}
+document.querySelector("main").addEventListener("click",e=>{{const t=e.target.closest(".tile");
+  if(t){{e.preventDefault();open(t.dataset.id,true);}}}});
 viewer.querySelector(".prev").onclick=()=>show(index-1);viewer.querySelector(".next").onclick=()=>show(index+1);
 viewer.querySelector(".close").onclick=close;
 modes.forEach(b=>b.onclick=()=>{{mode=b.dataset.mode;show(index);}});
