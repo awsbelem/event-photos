@@ -126,19 +126,20 @@ Cost: about US$ 0.0013 per photo indexed and per face count in the review, US$ 0
 `compose.yaml` runs it as a one-shot command limited to 1.5 GB and 1.5 CPU with one worker, so a batch
 cannot starve other apps on a shared host (about 6.5 s per photo on 2 vCPU; peak 1.2 GB per worker).
 
-```bash
-rsync -a --exclude .venv --exclude .git --exclude out ./ <user>@<server>:event-photos/   # models/ is not in git
-ssh <user>@<server> 'cd event-photos && docker compose build'
-# access key, with the image's AWS CLI (create ~/.aws first, or Docker creates it owned by root):
-mkdir -m 700 -p ~/.aws && docker run --rm -it -v ~/.aws:/home/app/.aws --entrypoint aws event-photos configure --profile event-photos
-```
-
-Each run, keep a tunnel open and open the review link the command prints:
+`scripts/vps.sh` drives it from your machine through your own ssh; the server address is only an
+argument, and the script never touches `~/.aws` or ssh keys here. The server needs Docker, git and rsync.
 
 ```bash
-ssh -L 8766:127.0.0.1:8766 <user>@<server>
-cd event-photos && docker compose run --rm --service-ports event-photos event <slug> --publish
+scripts/vps.sh <user>@<server> setup <slug>   # once: code from GitHub, models, event.local.json, last run's state
+# AWS access on the server, typed there by you (the image's AWS CLI writes ~/.aws):
+ssh -t <user>@<server> 'cd event-photos && docker run --rm -it -v ~/.aws:/home/app/.aws --entrypoint aws event-photos configure --profile event-photos'
+scripts/vps.sh <user>@<server> run <slug>     # each round: update, build, run; open the review link it prints
 ```
+
+`run` opens the review tunnel (`ssh -L 8766:127.0.0.1:8766`) itself and publishes after you approve
+(`--no-publish` to only build the gallery on the server). `setup` sends `out/events/<slug>` only when the
+server has none, so marks made in an earlier local run carry over and the server's own state is never
+overwritten.
 
 The review port is published on the server's 127.0.0.1 only; `~/.aws` is mounted read-only; the host user
 needs uid 1000. `EVENT_PHOTOS_WORKERS` and `EVENT_PHOTOS_REVIEW_HOST` also work outside Docker.
