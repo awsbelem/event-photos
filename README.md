@@ -43,7 +43,7 @@ uv run event-photos event <slug> --publish --skip-review   # reuse the last appr
 ```
 
 `events/<slug>/event.json` describes the event: `name`, `date`, `place`, `accent`, `aws_stack`; optional
-`schedule` (gallery sections by moment), `photographer`, `instagram`, `frames` (folders in
+`heading` (the gallery's title, default `name`), `schedule` (gallery sections by moment), `photographer`, `instagram`, `frames` (folders in
 `assets/frames/`, the first is the default), `aws_profile` (default `event-photos`), `timezone` (default
 `America/Belem`), `clock_offsets` (e.g. `{"ana-souza": "-0:05"}` for a camera clock that was off),
 `strength`, `face_search`, `removal_contact`, `pages_project`.
