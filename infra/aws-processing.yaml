@@ -1,0 +1,237 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Photo processing for every event in this account (README, "Processing on AWS"): one EC2 instance reached only
+  through SSM Session Manager (no inbound port, no ssh key), a private work bucket holding what is not in git
+  (models, event.local.json, each event's out/ state), and the rights for the events' publisher user to operate
+  that instance and nothing else. Deploy in us-east-1, next to the galleries and their upload inboxes, after
+  the event stacks exist (scripts/cloudshell_processing_stack.sh).
+
+Parameters:
+  PublisherUser:
+    Type: String
+    AllowedPattern: "[A-Za-z0-9+=,.@_-]{1,64}"
+    Description: IAM user of the event stacks (the access key on the operator's notebook)
+  EventPolicyArns:
+    Type: CommaDelimitedList
+    Description: >-
+      The managed policies the event stacks grant their publisher (event-photos-<slug>-gallery and
+      event-photos-<slug>-faces): the instance gets exactly those rights, through its role
+  InstanceType:
+    Type: String
+    Default: c7i.large
+    Description: Starting size; scripts/aws.sh size changes it between events
+  VolumeSize:
+    Type: Number
+    Default: 80
+    MinValue: 30
+    Description: GB of gp3 for the system, the image and every event's out/
+  IdleStopPeriods:
+    Type: Number
+    Default: 24
+    MinValue: 6
+    MaxValue: 288
+    Description: >-
+      Stop the instance after this many 5-minute periods with the CPU idle (24 = 2 h), so a forgotten one does
+      not run all night
+  ImageId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Resources:
+  WorkBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub event-photos-${AWS::AccountId}-work
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      # A sync that overwrote a review with an older one can be undone for a week.
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: old-versions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 7
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+
+  WorkBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WorkBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource: [!GetAtt WorkBucket.Arn, !Sub "${WorkBucket.Arn}/*"]
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  WorkBucketAccess:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: event-photos-work-bucket
+      Users: [!Ref PublisherUser]  # the notebook: models and settings up, fallback runs on the notebook
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: s3:ListBucket
+            Resource: !GetAtt WorkBucket.Arn
+          - Effect: Allow
+            Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+            Resource: !Sub ${WorkBucket.Arn}/*
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: event-photos-processing
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns: !Split
+        - ","
+        - !Join
+          - ","
+          - - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+            - !Ref WorkBucketAccess
+            - !Join [",", !Ref EventPolicyArns]
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  # No ingress at all: Session Manager reaches the instance over its own outbound connection.
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: event-photos processing, outbound only
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      SecurityGroupIds: [!GetAtt SecurityGroup.GroupId]
+      # IMDSv2 only; hop limit 2 so the container (one network hop away) can still reach the role's credentials.
+      MetadataOptions:
+        HttpTokens: required
+        HttpPutResponseHopLimit: 2
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: !Ref VolumeSize
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: event-photos-processing
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+          dnf install -y docker git tmux
+          systemctl enable --now docker
+          usermod -aG docker ec2-user
+          # Compose and buildx are not packaged for Amazon Linux: pinned releases, checked against pinned sha256.
+          plugins=/usr/local/lib/docker/cli-plugins
+          mkdir -p "$plugins"
+          fetch() {  # url name sha256
+            curl -fsSL -o "/tmp/$2" "$1"
+            echo "$3  /tmp/$2" | sha256sum -c -
+            install -m 755 "/tmp/$2" "$plugins/$2"
+          }
+          fetch https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 docker-compose \
+            383ce6698cd5d5bbf958d2c8489ed75094e34a77d340404d9f32c4ae9e12baf0
+          fetch https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64 docker-buildx \
+            aa7a9778349e1a8ace685e4c51a1d33e7a9b0aa6925d1c625b09cb3800eba696
+          # The CLI calls `aws --profile event-photos`; here that profile is the instance role.
+          install -d -m 700 -o ec2-user -g ec2-user /home/ec2-user/.aws
+          printf '[profile event-photos]\ncredential_source = Ec2InstanceMetadata\nregion = ${AWS::Region}\n' \
+            > /home/ec2-user/.aws/config
+          chown ec2-user:ec2-user /home/ec2-user/.aws/config
+          sudo -u ec2-user git clone -q https://github.com/awsbelem/event-photos.git /home/ec2-user/event-photos
+
+  IdleStop:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: event-photos-processing-idle
+      AlarmDescription: Stops the processing instance after a long idle stretch; scripts/aws.sh starts it again.
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref Instance
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: !Ref IdleStopPeriods
+      Threshold: 3
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Sub arn:aws:automate:${AWS::Region}:ec2:stop
+
+  # The operator's notebook (the publisher's access key) can run this instance, and only this one.
+  OperatorAccess:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: event-photos-processing-operator
+      Users: [!Ref PublisherUser]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - ec2:DescribeInstances
+              - ec2:DescribeInstanceStatus
+              - ec2:DescribeInstanceTypes
+              - ssm:DescribeInstanceInformation
+              - ssm:GetCommandInvocation
+              - ssm:ListCommandInvocations
+            Resource: "*"
+          - Effect: Allow
+            Action: [ec2:StartInstances, ec2:StopInstances, ec2:ModifyInstanceAttribute]
+            Resource: !Sub arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/${Instance}
+          - Effect: Allow
+            Action: [ssm:StartSession, ssm:SendCommand]
+            Resource:
+              - !Sub arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/${Instance}
+              - !Sub arn:aws:ssm:${AWS::Region}::document/AWS-StartInteractiveCommand
+              - !Sub arn:aws:ssm:${AWS::Region}::document/AWS-StartPortForwardingSession
+              - !Sub arn:aws:ssm:${AWS::Region}::document/AWS-RunShellScript
+              - !Sub arn:aws:ssm:${AWS::Region}::document/SSM-SessionManagerRunShell
+          - Effect: Allow
+            Action: [ssm:TerminateSession, ssm:ResumeSession]
+            Resource: !Sub arn:aws:ssm:*:${AWS::AccountId}:session/${!aws:username}-*
+          - Effect: Allow
+            Action: cloudformation:DescribeStacks
+            Resource: !Ref AWS::StackId
+
+Outputs:
+  InstanceId:
+    Value: !Ref Instance
+  WorkBucket:
+    Value: !Ref WorkBucket
+  Region:
+    Value: !Ref AWS::Region

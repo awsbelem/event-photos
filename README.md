@@ -20,7 +20,7 @@ phones) are processed and delivered at 4032 px on the long side, which keeps eac
 ## Setup
 
 Python 3.12+, [uv](https://docs.astral.sh/uv/) and `exiftool` (or only Docker, see
-[Running on a server](#running-on-a-server-docker)). The models are not versioned; put them in `models/`:
+[Docker](#docker)). The models are not versioned; put them in `models/`:
 
 ```bash
 mkdir -p models
@@ -121,33 +121,48 @@ faces in profile or very small in the frame are often missed, and the schedule s
 Cost: about US$ 0.0013 per photo indexed and per face count in the review, US$ 0.0026 per search
 (sa-east-1 list prices, 2026); set an AWS Budgets alert.
 
-## Running on a server (Docker)
+## Processing on AWS
 
-`Dockerfile` packs the CLI with exiftool, the AWS CLI and the models (base images pinned by digest);
-`compose.yaml` runs it as a one-shot command limited to 1.5 GB and 1.5 CPU with one worker, so a batch
-cannot starve other apps on a shared host (about 6.5 s per photo on 2 vCPU; peak 1.2 GB per worker).
-Those are defaults for a small shared server: on a bigger machine, copy `.env.example` to `.env` next to
-`compose.yaml` and raise `EVENT_PHOTOS_WORKERS`, `EVENT_PHOTOS_MEMORY` (workers × 1.2 GB or more) and
-`EVENT_PHOTOS_CPUS`; `EVENT_PHOTOS_MAX_LONG_SIDE=0` keeps photos at their original size. `.env` is
-gitignored, so each machine keeps its own.
+The events run on one EC2 instance next to the galleries (`infra/aws-processing.yaml`, us-east-1, stack
+`event-photos-processing`), reached only through SSM Session Manager: no inbound port, no ssh key, and the
+instance works through a role, so no access key lives on it. The events' publisher key, on the operator's
+notebook, may operate that instance and nothing else. A private work bucket holds what git does not: the
+models, each `event.local.json` and each event's `out/` state, saved at the end of every round.
 
-`scripts/vps.sh` drives it from your machine through your own ssh; the server address is only an
-argument, and the script never touches `~/.aws` or ssh keys here. The server needs Docker, git and rsync.
+**Setup**, once, after the event stacks: upload `infra/aws-processing.yaml` to CloudShell and run
+`PUBLISHER_USER=<the events' iam user> bash cloudshell_processing_stack.sh <slug>...` with every event
+(again whenever an event is added). Then, on the notebook, with the AWS CLI, the
+[Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
+and the `event-photos` profile:
 
 ```bash
-scripts/vps.sh <user>@<server> setup <slug>   # once: code from GitHub, models, event.local.json, last run's state
-# AWS access on the server, typed there by you (the image's AWS CLI writes ~/.aws):
-ssh -t <user>@<server> 'cd event-photos && docker run --rm -it -v ~/.aws:/home/app/.aws --entrypoint aws event-photos configure --profile event-photos'
-scripts/vps.sh <user>@<server> run <slug>     # each round: update, build, run; open the review link it prints
+scripts/aws.sh setup                          # models and event.local.json to the bucket, Docker image
+scripts/aws.sh size c7i.4xlarge c7a.4xlarge   # stop, resize, start (the next type if the first is not free)
+scripts/aws.sh run <slug>                     # a round: open the review link it prints; --no-publish to only build
+scripts/aws.sh attach                         # the connection dropped: back into the same round
+scripts/aws.sh status | stop | shell
 ```
 
-`run` opens the review tunnel (`ssh -L 8766:127.0.0.1:8766`) itself and publishes after you approve
-(`--no-publish` to only build the gallery on the server). `setup` sends `out/events/<slug>` only when the
-server has none, so marks made in an earlier local run carry over and the server's own state is never
-overwritten.
+The round runs in `tmux` on the instance, so a dropped connection does not stop it; `run` and `attach`
+open the review tunnel themselves (local port 8766). `.env` on the instance follows its size (one worker per
+physical core with about 1.2 GB each). An alarm stops the instance after two idle hours; `run` starts it
+again. `event.local.json` is edited on the notebook (`face-search` runs there too) and sent on every `run`.
 
-The review port is published on the server's 127.0.0.1 only; `~/.aws` is mounted read-only; the host user
-needs uid 1000. `EVENT_PHOTOS_WORKERS` and `EVENT_PHOTOS_REVIEW_HOST` also work outside Docker.
+**Sizes:** c7i.large (2 vCPU, US$ 0.09/h, about 6.5 s per photo) for small events; c7i.4xlarge (16 vCPU,
+US$ 0.71/h, 8 workers) when photos arrive by the thousand. Cost is hours on × size, so size it for the day.
+
+**On this machine instead** (fallback): `scripts/aws.sh pull-state <slug>`, run `event` here, then
+`scripts/aws.sh push-state <slug>`; the next round on the instance takes that state with `run <slug> --restore`.
+
+### Docker
+
+`Dockerfile` packs the CLI with exiftool, the AWS CLI and the models (base images pinned by digest);
+`compose.yaml` runs it as a one-shot command limited to 1.5 GB and 1.5 CPU with one worker by default (peak
+1.2 GB per worker). On a bigger machine, copy `.env.example` to `.env` next to `compose.yaml` and raise
+`EVENT_PHOTOS_WORKERS`, `EVENT_PHOTOS_MEMORY` (workers × 1.2 GB or more) and `EVENT_PHOTOS_CPUS`;
+`EVENT_PHOTOS_MAX_LONG_SIDE=0` keeps photos at their original size. `.env` is gitignored, so each machine
+keeps its own. The review port is published on the host's 127.0.0.1 only; `~/.aws` is mounted read-only; the
+host user needs uid 1000. `EVENT_PHOTOS_WORKERS` and `EVENT_PHOTOS_REVIEW_HOST` also work outside Docker.
 
 ## Security notes
 
@@ -157,7 +172,8 @@ needs uid 1000. `EVENT_PHOTOS_WORKERS` and `EVENT_PHOTOS_REVIEW_HOST` also work 
 - Neither Lambda function has reserved concurrency: on accounts with the default quota of 10, any
   reservation fails the stack. With a higher quota, adding `ReservedConcurrentExecutions` bounds a flood
   further.
-- After the event, delete the publisher's access key (`aws iam delete-access-key`), or the stacks.
+- After the event, delete the publisher's access key (`aws iam delete-access-key`), or the stacks; the
+  processing stack's work bucket must be emptied first (it keeps old versions for a week).
 
 ## Frames
 

@@ -14,7 +14,7 @@ Cards sit in an inert <template> and enter the page a batch at a time as the ope
 review of thousands of photos loads only the images in view; the folded section loads none until opened.
 
 In a container, EVENT_PHOTOS_REVIEW_HOST=0.0.0.0 makes the page reachable through the
-published port (bind that port to the host's 127.0.0.1 and open it over an SSH tunnel);
+published port (bind that port to the host's 127.0.0.1 and open it over a tunnel, as scripts/aws.sh does);
 no browser is opened then.
 
 The page lives under a random token (/<token>/review.html) and only answers requests addressed

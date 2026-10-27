@@ -1,4 +1,4 @@
-# The whole CLI in one image, for running it on a server instead of the desktop (see README, "Running on a VPS").
+# The whole CLI in one image, for the processing instance (see README, "Processing on AWS").
 # Base images are pinned by digest: bump the tag and digest together (docker buildx imagetools inspect <image>).
 FROM python:3.12-slim-bookworm@sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70
 
