@@ -21,6 +21,8 @@ KIT = json.loads((BRAND / "brand.json").read_text())
 
 AMEIXA = (0x42, 0x31, 0x4B)
 LARANJA = (0xFF, 0x99, 0x00)
+EU_FUI = {"feed": 88, "story": 94}  # px of the card's "Eu fui!"
+CUIA = {"feed": 260, "story": 310}  # px width of the cuia de tacacá on the card's corner
 BRANCO = (255, 255, 255)
 LILAS = (0xA6, 0xA6, 0xE6)
 SUNSET = ((0xFF, 0x43, 0x53), (0xFF, 0xD2, 0x9A))
@@ -139,16 +141,21 @@ def cartao(fmt: str) -> tuple[Image.Image, Image.Image, dict]:
     draw.rounded_rectangle(card, 22, fill=BRANCO)
     caption_h = 150 if story else 128
     box = [card[0] + 30, card[1] + 30, card[2] - 30, card[3] - caption_h]
-    gradient_text(bg, (card[0] + card[2]) // 2 - (110 if story else 100), card[3] - caption_h + 18,
-                  "Eu fui!", font("PermanentMarker-Regular", 74 if story else 64))
+    date_x = card[2] - 40 - max(text_width(draw, "31.10.2026", font("IBMPlexSans-Bold", 30), 1),
+                                text_width(draw, "Faci Wyden · Belém", font("IBMPlexSans-Regular", 24), 0))
     draw_text(bg, (card[2] - 40 - text_width(draw, "31.10.2026", font("IBMPlexSans-Bold", 30), 1),
                    card[3] - caption_h + 32), "31.10.2026", font("IBMPlexSans-Bold", 30), AMEIXA, 1)
     draw_text(bg, (card[2] - 40 - text_width(draw, "Faci Wyden · Belém", font("IBMPlexSans-Regular", 24), 0),
                    card[3] - caption_h + 74), "Faci Wyden · Belém", font("IBMPlexSans-Regular", 24), (0x69, 0x4D, 0x82))
     draw_text(bg, (w // 2, foot + (40 if story else 30)), HANDLE, font("IBMPlexSans-Bold", 34), LARANJA, 1, "ma")
     fg = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    cuia = asset("tacaca.png", 250 if story else 210).rotate(-8, expand=True, resample=Image.BICUBIC)
-    fg.paste(cuia, (card[0] - 40, card[3] - caption_h - cuia.height // 2 + 10), cuia)
+    cuia = asset("tacaca.png", CUIA[fmt]).rotate(-8, expand=True, resample=Image.BICUBIC)
+    cuia_x = card[0] - 40
+    fg.paste(cuia, (cuia_x, card[3] - caption_h - cuia.height // 2 + 10), cuia)
+    # "Eu fui!" sits in the middle of the room the cuia and the date leave, so neither crowds it as they grow.
+    cuia_right = cuia_x + cuia.getbbox()[2]
+    gradient_text(bg, (cuia_right + date_x) // 2, card[3] - caption_h + 14,
+                  "Eu fui!", font("PermanentMarker-Regular", EU_FUI[fmt]))
     return bg, fg, {"box": box, "radius": 6, "border": {"width": 0}}
 
 
