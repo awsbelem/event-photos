@@ -70,12 +70,13 @@ start() {
   awsc ec2 wait instance-running --instance-ids "$IID"
 }
 
-# A script run as ec2-user on the instance, its output printed here; fails when the script fails.
+# A script run as ec2-user on the instance, its output printed here; fails when the script fails. It runs from a
+# file with stdin closed: fed through stdin, a command that reads it (docker compose run) swallowed the rest.
 remote() {
   local b64 id status tries=0
   b64=$(printf 'set -euo pipefail\n%s\n' "$1" | base64 | tr -d '\n')
   id=$(awsc ssm send-command --instance-ids "$IID" --document-name AWS-RunShellScript \
-        --parameters "$(json commands "echo $b64 | base64 -d | sudo -u ec2-user -H bash -l" executionTimeout 3600)" \
+        --parameters "$(json commands "f=\$(mktemp); echo $b64 | base64 -d > \$f; chmod 644 \$f; sudo -u ec2-user -H bash -l \$f < /dev/null; s=\$?; rm -f \$f; exit \$s" executionTimeout 3600)" \
         --query Command.CommandId --output text)
   while :; do
     status=$(awsc ssm get-command-invocation --command-id "$id" --instance-id "$IID" --query Status --output text 2>/dev/null || echo Pending)
