@@ -113,14 +113,24 @@ def published_photos(run_dir: Path) -> tuple[dict[str, Path], set[str]]:
     return photos, {by_name[n] for n in load_minors(run_dir) if n in by_name}
 
 
+def face_images(run_dir: Path) -> dict[str, Path]:
+    """Photo name → the image its faces are counted on: the developed photo, which is what gets indexed (a small
+    face the 1200 px preview misses can show at the 1920 px sent), or the preview for photos not developed."""
+    rows = json.loads((run_dir / "metrics.json").read_text())["photos"]
+    images = {}
+    for r in rows:
+        candidates = [run_dir / "selected" / r["output"]] if r["keep"] else []
+        candidates += [run_dir / "previews" / kind / r["preview"] for kind in ("after", "before")]
+        if found := next((c for c in candidates if c.exists()), None):
+            images[r["name"]] = found
+    return images
+
+
 def _face_counts(config: dict, run_dir: Path, slug: str) -> dict[str, int] | None:
     """Faces per photo for the review; None when Rekognition is unreachable (the review still opens)."""
-    rows = json.loads((run_dir / "metrics.json").read_text())["photos"]
-    previews = {r["name"]: next((run_dir / "previews" / kind / r["preview"] for kind in ("after", "before")
-                                 if (run_dir / "previews" / kind / r["preview"]).exists()), None) for r in rows}
     try:
         stack = FaceStack.load(face_search_config(config).stack, config.get("aws_profile", publish_mod.AWS_PROFILE), slug)
-        return stack.index.counts({k: v for k, v in previews.items() if v}, run_dir / FACE_COUNTS)
+        return stack.index.counts(face_images(run_dir), run_dir / FACE_COUNTS)
     except Exception as exc:
         print(f"aviso: contagem de rostos indisponível ({type(exc).__name__}).")
         return None
@@ -139,7 +149,12 @@ def _sync_faces(config: dict, run_dir: Path, slug: str) -> dict | None:
                   "Publicando sem a busca por rosto.")
             return None
         photos, minors = published_photos(run_dir)
-        print(stack.index.sync(photos, minors, run_dir / FACE_STATE).summary())
+        # A photo the count found no face in, on the very image that would be sent, has nothing to index: the
+        # index call would cost and add nothing. A photo not counted (Rekognition failed) is still sent.
+        counts = stack.index.counts(face_images(run_dir), run_dir / FACE_COUNTS)
+        stems = {r["name"]: Path(r["output"]).stem for r in json.loads((run_dir / "metrics.json").read_text())["photos"]}
+        faceless = {stems[n] for n, k in counts.items() if k == 0 and n in stems}
+        print(stack.index.sync(photos, minors | faceless, run_dir / FACE_STATE).summary())
     except Exception as exc:  # the gallery must go out even if Rekognition is unreachable
         print(f"aviso: busca por rosto não atualizada ({type(exc).__name__}: {exc}). Publicando sem a busca.")
         return None

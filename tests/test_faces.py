@@ -134,3 +134,40 @@ def test_face_counts_are_cached_until_the_photo_changes(tmp_path):
     assert index.counts({"a.jpg": a}, tmp_path / "c.json") == {"a.jpg": 3}
     index.counts({"a.jpg": a}, tmp_path / "c.json")
     assert rek.detects == 1
+
+
+def test_faces_are_counted_on_the_image_that_would_be_indexed(tmp_path):
+    # The preview (1200 px) can miss a small face the developed photo (sent at 1920 px) shows.
+    from event_photos.cli import face_images
+    rows = [{"name": "a.jpg", "output": "a.jpg", "preview": "a.jpg", "keep": True},
+            {"name": "b.jpg", "output": "b.jpg", "preview": "b.jpg", "keep": False}]
+    (tmp_path / "metrics.json").write_text(json.dumps({"photos": rows}))
+    for f in ("selected/a.jpg", "previews/after/a.jpg", "previews/after/b.jpg"):
+        (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / f).write_bytes(b"x")
+    assert face_images(tmp_path) == {"a.jpg": tmp_path / "selected/a.jpg", "b.jpg": tmp_path / "previews/after/b.jpg"}
+
+
+def test_publish_leaves_photos_without_faces_out_of_the_index(monkeypatch, tmp_path):
+    from event_photos import cli
+    rows = [{"name": n, "output": n, "preview": n, "keep": True} for n in ("a.jpg", "b.jpg", "c.jpg", "d.jpg")]
+    (tmp_path / "metrics.json").write_text(json.dumps({"photos": rows}))
+    (tmp_path / "review.json").write_text(json.dumps({"keep": {}, "minors": ["c.jpg"]}))
+    sent = {}
+
+    class Index:
+        def exists(self):
+            return True
+
+        def counts(self, photos, cache_file):
+            return {"a.jpg": 0, "b.jpg": 2, "c.jpg": 1}  # d.jpg: not counted (Rekognition hiccup)
+
+        def sync(self, photos, excluded, state_file):
+            sent["excluded"] = excluded
+            state_file.write_text(json.dumps({"photos": {}}))
+            return type("R", (), {"summary": lambda self: ""})()
+
+    stack = type("S", (), {"index": Index(), "outputs": {"SearchUrl": "u"}})()
+    monkeypatch.setattr(cli.FaceStack, "load", classmethod(lambda *a: stack))
+    assert cli._sync_faces({"date": "2026-10-31", "face_search": {"enabled": True, "stack": "s"}}, tmp_path, "e")
+    assert sent["excluded"] == {"a", "c"}  # no faces, and the minor; an uncounted photo still goes

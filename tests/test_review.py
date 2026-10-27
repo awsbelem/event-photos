@@ -139,3 +139,10 @@ def test_approve_rejects_what_another_site_could_send(tmp_path):
     assert send(f"/{TOKEN}/approve", b"not json", {"Content-Type": "application/json"}) == 400
     assert not (tmp_path / "review.json").exists()
     assert send(f"/{TOKEN}/approve", payload, {"Content-Type": "application/json"}) == 204
+
+
+def test_a_photo_without_faces_says_it_stays_out_of_the_search(tmp_path):
+    run = run_dir_with(tmp_path)
+    approve(run, {"keep": {"a.jpg": True, "b.jpg": True}}, 8795, ask_minors=True, face_counts={"a.jpg": 0, "b.jpg": 1})
+    html = (run / "review.html").read_text()
+    assert "0 rostos · fora da busca" in html and "1 rosto<" in html

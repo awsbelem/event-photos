@@ -153,7 +153,8 @@ def _card(r: dict, frame_key: str, minors: set[str] | None, faces: dict[str, int
     notes = r["reasons"] + r["flags"]
     note = f'<p class="note">{escape(" · ".join(notes))}</p>' if notes else ""
     n = faces.get(r["name"])
-    count = "" if n is None else f'<p class="faces">{n} {"rosto" if n == 1 else "rostos"}</p>'
+    count = ("" if n is None else '<p class="faces">0 rostos · fora da busca</p>' if n == 0
+             else f'<p class="faces">{n} {"rosto" if n == 1 else "rostos"}</p>')
     minor = ("" if minors is None else
              f'<label class="minor"><input type="checkbox"{" checked" if r["name"] in minors else ""}> '
              "Tem menor de idade (fora da busca)</label>")
