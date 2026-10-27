@@ -14,7 +14,8 @@ The attendee-facing pages (gallery, upload page, review) are in Portuguese; code
    photographer; attendees save a photo or post it with the frame they pick.
 5. **Attendees find themselves** by scrolling or, optionally, with a selfie (Amazon Rekognition).
 
-Everything runs on the CPU (no GPU). Inputs: DNG (incl. Apple ProRAW), HEIC, JPEG.
+Everything runs on the CPU (no GPU). Inputs: DNG (incl. Apple ProRAW), HEIC, JPEG; larger photos (48 MP
+phones) are processed and delivered at 4032 px on the long side, which keeps each worker near 1 GB.
 
 ## Setup
 

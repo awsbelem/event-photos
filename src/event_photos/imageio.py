@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import io
 import json
+import math
 import subprocess
 from pathlib import Path
 
@@ -16,6 +17,10 @@ pillow_heif.register_heif_opener()
 
 RAW_EXTENSIONS = {".dng"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".heic", ".heif", ".png"}
+# Photos are decoded at most this size on the long side (a 12 MP phone frame). Memory grows with the pixel
+# count: a 48 MP iPhone photo took 3.2 GB at full size, more than the server's container allows, and nothing
+# downstream uses more (the gallery's largest view is 1800 px).
+MAX_LONG_SIDE = 4032
 
 
 def list_photos(folder: Path) -> list[Path]:
@@ -82,6 +87,21 @@ def _to_srgb_pil(im: Image.Image) -> Image.Image:
     return im
 
 
+def _cap(im: Image.Image) -> Image.Image:
+    if max(im.size) > MAX_LONG_SIDE:
+        im.thumbnail((MAX_LONG_SIDE, MAX_LONG_SIDE), Image.LANCZOS)
+    return im
+
+
+def _decode(path: Path) -> Image.Image:
+    """Upright sRGB image, at most MAX_LONG_SIDE on its long side."""
+    with Image.open(path) as im:
+        w, h = im.size
+        if (scale := MAX_LONG_SIDE / max(w, h)) < 1:  # JPEG decodes straight at a reduced scale
+            im.draft(im.mode, (math.ceil(w * scale), math.ceil(h * scale)))
+        return _to_srgb_pil(_cap(ImageOps.exif_transpose(im)))
+
+
 def _baseline_exposure(path: Path) -> float:
     """DNG BaselineExposure in EV. Apple ProRAW stores ~+1..+3 EV here; LibRaw ignores it."""
     out = subprocess.run(["exiftool", "-q", "-n", "-s3", "-BaselineExposure", str(path)],
@@ -96,12 +116,11 @@ def load_linear(path: Path) -> np.ndarray:
     """Decode any supported photo to a float32 HxWx3 array in linear sRGB."""
     if path.suffix.lower() in RAW_EXTENSIONS:
         with rawpy.imread(str(path)) as raw:
-            rgb = raw.postprocess(use_camera_wb=True, output_bps=16, no_auto_bright=True,
+            half = max(raw.sizes.width, raw.sizes.height) > MAX_LONG_SIDE  # 48 MP ProRAW → 12 MP
+            rgb = raw.postprocess(use_camera_wb=True, output_bps=16, no_auto_bright=True, half_size=half,
                                   gamma=(1, 1), output_color=rawpy.ColorSpace.sRGB)
         return rgb.astype(np.float32) / 65535.0 * np.float32(2.0 ** _baseline_exposure(path))
-    with Image.open(path) as im:
-        im = _to_srgb_pil(ImageOps.exif_transpose(im))
-        return srgb_to_linear(np.asarray(im, dtype=np.float32) / 255.0)
+    return srgb_to_linear(np.asarray(_decode(path), dtype=np.float32) / 255.0)
 
 
 _ORIENTATION_TRANSPOSE = {2: Image.FLIP_LEFT_RIGHT, 3: Image.ROTATE_180, 4: Image.FLIP_TOP_BOTTOM,
@@ -115,13 +134,12 @@ def load_camera_rendering(path: Path) -> np.ndarray:
     carries no orientation of its own: the DNG's orientation is applied.
     """
     if path.suffix.lower() not in RAW_EXTENSIONS:
-        with Image.open(path) as im:
-            return np.asarray(_to_srgb_pil(ImageOps.exif_transpose(im)))
+        return np.asarray(_decode(path))
     data = subprocess.run(["exiftool", "-b", "-PreviewImage", str(path)], capture_output=True).stdout
     orientation = subprocess.run(["exiftool", "-q", "-n", "-s3", "-Orientation", str(path)],
                                  capture_output=True, text=True).stdout.strip()
     with Image.open(io.BytesIO(data)) as im:
-        im = _to_srgb_pil(im)
+        im = _to_srgb_pil(_cap(im))
     if orientation.isdigit() and int(orientation) in _ORIENTATION_TRANSPOSE:
         im = im.transpose(_ORIENTATION_TRANSPOSE[int(orientation)])
     return np.asarray(im)
