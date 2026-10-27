@@ -1,5 +1,6 @@
 # One-shot CLI, not a service: `docker compose run --rm --service-ports event-photos event <slug>`.
-# Limits keep a big batch from starving whatever else runs on the host.
+# Limits keep a big batch from starving whatever else runs on the host. The defaults suit a small shared server;
+# set your own in a .env next to this file (see .env.example), at about 1.2 GB of memory per worker.
 services:
   event-photos:
     build: .
@@ -10,8 +11,9 @@ services:
       - ~/.aws:/home/app/.aws:ro
     ports:
       - "127.0.0.1:8766:8766"   # review page; reach it with ssh -L 8766:127.0.0.1:8766
-    mem_limit: 1536m
-    memswap_limit: 1536m
-    cpus: 1.5
+    mem_limit: ${EVENT_PHOTOS_MEMORY:-1536m}
+    memswap_limit: ${EVENT_PHOTOS_MEMORY:-1536m}
+    cpus: ${EVENT_PHOTOS_CPUS:-1.5}
     environment:
-      EVENT_PHOTOS_WORKERS: "1"
+      EVENT_PHOTOS_WORKERS: ${EVENT_PHOTOS_WORKERS:-1}
+      EVENT_PHOTOS_MAX_LONG_SIDE: ${EVENT_PHOTOS_MAX_LONG_SIDE:-4032}

@@ -5,6 +5,7 @@ import datetime as dt
 import io
 import json
 import math
+import os
 import subprocess
 from pathlib import Path
 
@@ -17,10 +18,10 @@ pillow_heif.register_heif_opener()
 
 RAW_EXTENSIONS = {".dng"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".heic", ".heif", ".png"}
-# Photos are decoded at most this size on the long side (a 12 MP phone frame). Memory grows with the pixel
-# count: a 48 MP iPhone photo took 3.2 GB at full size, more than the server's container allows, and nothing
-# downstream uses more (the gallery's largest view is 1800 px).
-MAX_LONG_SIDE = 4032
+# Photos are decoded at most this size on the long side; 4032 is a 12 MP phone frame. Memory grows with the
+# pixel count: a 48 MP iPhone photo took 3.2 GB at full size against 0.9 GB here, and the gallery's largest
+# view is 1800 px. EVENT_PHOTOS_MAX_LONG_SIDE=0 keeps the original size, for machines with memory to spare.
+MAX_LONG_SIDE = int(os.environ.get("EVENT_PHOTOS_MAX_LONG_SIDE", "4032"))
 
 
 def list_photos(folder: Path) -> list[Path]:
@@ -88,7 +89,7 @@ def _to_srgb_pil(im: Image.Image) -> Image.Image:
 
 
 def _cap(im: Image.Image) -> Image.Image:
-    if max(im.size) > MAX_LONG_SIDE:
+    if MAX_LONG_SIDE and max(im.size) > MAX_LONG_SIDE:
         im.thumbnail((MAX_LONG_SIDE, MAX_LONG_SIDE), Image.LANCZOS)
     return im
 
@@ -97,7 +98,7 @@ def _decode(path: Path) -> Image.Image:
     """Upright sRGB image, at most MAX_LONG_SIDE on its long side."""
     with Image.open(path) as im:
         w, h = im.size
-        if (scale := MAX_LONG_SIDE / max(w, h)) < 1:  # JPEG decodes straight at a reduced scale
+        if MAX_LONG_SIDE and (scale := MAX_LONG_SIDE / max(w, h)) < 1:  # JPEG decodes straight at a reduced scale
             im.draft(im.mode, (math.ceil(w * scale), math.ceil(h * scale)))
         return _to_srgb_pil(_cap(ImageOps.exif_transpose(im)))
 
@@ -116,7 +117,7 @@ def load_linear(path: Path) -> np.ndarray:
     """Decode any supported photo to a float32 HxWx3 array in linear sRGB."""
     if path.suffix.lower() in RAW_EXTENSIONS:
         with rawpy.imread(str(path)) as raw:
-            half = max(raw.sizes.width, raw.sizes.height) > MAX_LONG_SIDE  # 48 MP ProRAW → 12 MP
+            half = bool(MAX_LONG_SIDE) and max(raw.sizes.width, raw.sizes.height) > MAX_LONG_SIDE  # 48 MP ProRAW → 12 MP
             rgb = raw.postprocess(use_camera_wb=True, output_bps=16, no_auto_bright=True, half_size=half,
                                   gamma=(1, 1), output_color=rawpy.ColorSpace.sRGB)
         return rgb.astype(np.float32) / 65535.0 * np.float32(2.0 ** _baseline_exposure(path))

@@ -126,6 +126,10 @@ Cost: about US$ 0.0013 per photo indexed and per face count in the review, US$ 0
 `Dockerfile` packs the CLI with exiftool, the AWS CLI and the models (base images pinned by digest);
 `compose.yaml` runs it as a one-shot command limited to 1.5 GB and 1.5 CPU with one worker, so a batch
 cannot starve other apps on a shared host (about 6.5 s per photo on 2 vCPU; peak 1.2 GB per worker).
+Those are defaults for a small shared server: on a bigger machine, copy `.env.example` to `.env` next to
+`compose.yaml` and raise `EVENT_PHOTOS_WORKERS`, `EVENT_PHOTOS_MEMORY` (workers × 1.2 GB or more) and
+`EVENT_PHOTOS_CPUS`; `EVENT_PHOTOS_MAX_LONG_SIDE=0` keeps photos at their original size. `.env` is
+gitignored, so each machine keeps its own.
 
 `scripts/vps.sh` drives it from your machine through your own ssh; the server address is only an
 argument, and the script never touches `~/.aws` or ssh keys here. The server needs Docker, git and rsync.

@@ -10,3 +10,4 @@ events/*/event.local.json
 .wrangler/
 .impeccable/
 coverage/
+.env

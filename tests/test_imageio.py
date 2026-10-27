@@ -31,3 +31,9 @@ def test_the_cap_applies_after_the_photo_is_turned_upright(tmp_path, monkeypatch
 def test_photos_within_the_cap_keep_their_size(tmp_path):
     path = photo(tmp_path / "small.jpg", (300, 200))
     assert load_camera_rendering(path).shape == (200, 300, 3)
+
+
+def test_a_cap_of_zero_keeps_the_original_size(tmp_path, monkeypatch):
+    monkeypatch.setattr(imageio, "MAX_LONG_SIDE", 0)
+    path = photo(tmp_path / "big.jpg", (300, 200))
+    assert load_camera_rendering(path).shape == (200, 300, 3) and load_linear(path).shape == (200, 300, 3)

@@ -21,5 +21,5 @@ RUN uv sync --frozen --no-dev
 # Same uid as the host user, so out/ stays editable outside the container; ~/.aws is mounted read-only.
 RUN useradd --uid 1000 --create-home app && mkdir -p out events && chown app out events
 USER app
-ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 EVENT_PHOTOS_REVIEW_HOST=0.0.0.0 EVENT_PHOTOS_WORKERS=1
+ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 EVENT_PHOTOS_REVIEW_HOST=0.0.0.0
 ENTRYPOINT ["event-photos"]
