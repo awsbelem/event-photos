@@ -18,6 +18,8 @@ from html import escape
 
 BUCKET = os.environ.get("INBOX_BUCKET", "")
 EVENT_NAME = ""  # written into the deployed copy by `event-photos inbox <slug> deploy`
+BRAND: dict = {}  # same: the event artwork as data URIs ("font", "logo", "hex_left", "hex_right"), from brand.py
+LOGO_ALT = "AWS Community Day Brasil — Edição Norte · Belém/PA"
 CONFIG_KEY = "_config/photographers.json"
 EXTENSIONS = {".jpg", ".jpeg", ".heic", ".heif", ".png", ".dng"}
 MAX_BYTES = 200 * 1024 * 1024  # a 48 MP ProRAW is ~75 MB
@@ -98,53 +100,83 @@ def _reply(status: int, body, content_type: str = "application/json") -> dict:
 
 def page() -> str:
     """The upload page, naming the event so photographers know where their photos go."""
+    art = BRAND
+    font = (f'@font-face{{font-family:Inter;font-style:normal;font-weight:400 800;font-display:swap;'
+            f'src:url({art["font"]}) format("woff2")}}' if art else "")
+    artwork = (f'<img class="hex hex-l" src="{art["hex_left"]}" alt="" width="84" height="152">'
+               f'<img class="hex hex-r" src="{art["hex_right"]}" alt="" width="180" height="164">'
+               f'<img class="logo" src="{art["logo"]}" alt="{LOGO_ALT}" width="353" height="141">' if art else "")
+    skyline = f'<img class="skyline" src="{art["skyline"]}" alt="" width="1080" height="250">' if art else ""
+    html = PAGE.replace("__FONT__", font).replace("__ART__", artwork).replace("__SKYLINE__", skyline)
     if not EVENT_NAME:
-        return PAGE.replace("__TITLE__", "Enviar fotos do evento").replace("__HEADING__", "<h1>Enviar fotos do evento</h1>")
+        return html.replace("__TITLE__", "Enviar fotos do evento").replace("__HEADING__", "<h1>Enviar fotos do evento</h1>")
     name = escape(EVENT_NAME)
-    return (PAGE.replace("__TITLE__", f"Enviar fotos · {name}")
-            .replace("__HEADING__", f'<p class="event">{name}</p><h1>Enviar fotos</h1>'))
+    return (html.replace("__TITLE__", f"Enviar fotos · {name}")
+            .replace("__HEADING__", f'<h1>Enviar fotos</h1><p class="event">{name}</p>'))
 
 
 PAGE = """<!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#0d1117">
+<meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#091b33">
 <title>__TITLE__</title>
 <style>
-:root{--bg:#0d1117;--panel:#161b22;--ink:#f0f3f6;--muted:#9aa4b2;--line:#2a313c;--accent:#f28528;--good:#3fb950;--bad:#f85149;
-  color-scheme:dark;accent-color:var(--accent)}
+__FONT__
+:root{--navy:#091b33;--deep:#06111f;--raised:#11274a;--rule:#313453;--ink:#ffffff;--muted:#c4d0e6;--orange:#fb8617;--violet:#5446e1;--lavender:#8365c7;--good:#4cc38a;--bad:#ff6b6b;color-scheme:dark;accent-color:var(--orange);scrollbar-color:var(--rule) var(--navy)}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;
-  padding:max(24px,env(safe-area-inset-top)) 20px max(32px,env(safe-area-inset-bottom))}
+body{margin:0;background:var(--navy);color:var(--ink);font:17px/1.5 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;
+  -webkit-font-smoothing:antialiased;padding:max(30px,env(safe-area-inset-top)) 20px max(40px,env(safe-area-inset-bottom));
+  position:relative;overflow-x:hidden}
+.hex{position:absolute;top:0;height:auto;pointer-events:none;user-select:none}
+.hex-l{left:0;width:clamp(28px,7.8vw,84px)}.hex-r{right:0;width:clamp(60px,16.7vw,180px)}
+.logo{display:block;width:clamp(210px,58vw,300px);height:auto;margin:0 auto 40px}
 main{max-width:560px;margin:0 auto}
-h1{font-size:clamp(1.6rem,6vw,2.1rem);line-height:1.15;margin:8px 0 8px;text-wrap:balance}
+h1{font-size:clamp(40px,11vw,60px);font-weight:800;line-height:1;letter-spacing:-.04em;margin:0 0 12px;text-wrap:balance}
 p{margin:0 0 16px;color:var(--muted)}
-.event{margin:0;color:var(--accent);font-weight:600;font-size:15px;letter-spacing:.02em}
-::selection{background:var(--accent);color:#111}
-:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
-label{display:block;font-weight:600;margin:0 0 8px}
-input[type=text]{width:100%;min-height:52px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);
-  background:var(--panel);color:var(--ink);font:600 20px/1 ui-monospace,SFMono-Regular,monospace;letter-spacing:.08em;text-transform:uppercase}
-button,.pick{display:flex;align-items:center;justify-content:center;width:100%;min-height:52px;margin-top:12px;border:0;
-  border-radius:12px;font-family:inherit;font-size:17px;font-weight:600;line-height:1;cursor:pointer}
-.primary{background:var(--accent);color:#111}
-.secondary{background:var(--panel);color:var(--ink);border:1px solid var(--line)}
-.quiet{background:none;color:var(--muted);text-decoration:underline;text-underline-offset:3px}
-button:disabled{opacity:.5;cursor:default}
-.hello{color:var(--ink);font-weight:600}
-.err{color:var(--bad);min-height:1.5em;margin-top:8px}
+.event{margin:0 0 24px;color:var(--muted);font-weight:600;font-size:16px}
+::selection{background:var(--orange);color:var(--navy)}
+:focus-visible{outline:3px solid var(--orange);outline-offset:3px}
+label{display:block;font-weight:700;margin:0 0 8px}
+input[type=text]{width:100%;min-height:56px;padding:12px 16px;border-radius:12px;border:1px solid var(--rule);
+  background:var(--raised);color:var(--ink);caret-color:var(--orange);
+  font:600 22px/1 ui-monospace,SFMono-Regular,monospace;letter-spacing:.1em;text-transform:uppercase}
+input[type=text]::placeholder{color:#8a9bbb}
+input[type=text]:focus{border-color:var(--orange);outline:none}
+button,.pick{display:flex;align-items:center;justify-content:center;width:100%;min-height:56px;margin-top:12px;border:0;
+  border-radius:12px;font-family:inherit;font-size:17px;font-weight:700;line-height:1;cursor:pointer;
+  transition:background .2s,transform .2s cubic-bezier(.16,1,.3,1)}
+button:active,.pick:active{transform:scale(.98)}
+.primary{background:var(--orange);color:var(--navy)}.primary:hover{background:#ff9a3d}
+.secondary{background:var(--raised);color:var(--ink);border:1px solid var(--rule)}.secondary:hover{border-color:var(--orange)}
+.quiet{background:none;color:var(--muted);font-weight:600;text-decoration:underline;text-decoration-color:var(--orange);
+  text-underline-offset:4px;min-height:48px}
+button:disabled{opacity:.55;cursor:not-allowed}button:disabled:active{transform:none}
+.hello{color:var(--ink);font-weight:800;font-size:24px;letter-spacing:-.02em;margin-bottom:8px}
+.err{color:var(--bad);min-height:1.5em;margin-top:10px;font-weight:600}
 input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
-.summary{margin:20px 0 8px;color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
-.bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden}.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+.summary{margin:24px 0 10px;color:var(--ink);font-weight:700;font-variant-numeric:tabular-nums}
+.bar{height:8px;border-radius:4px;background:var(--rule);overflow:hidden}
+.bar i{display:block;height:100%;background:var(--orange);transform:scaleX(0);transform-origin:left;
+  transition:transform .3s cubic-bezier(.16,1,.3,1)}
 ul{list-style:none;margin:12px 0 0;padding:0}
-li{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:15px}
+li{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--rule);font-size:15px}
 li span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-li .ok{color:var(--good)}li .fail{color:var(--bad)}li .wait{color:var(--muted)}
-.tips{margin-top:28px;font-size:15px}.tips li{display:list-item;border:0;padding:4px 0;color:var(--muted)}
-.tips ul{list-style:disc;padding-left:20px}
-@media (prefers-reduced-motion:reduce){.bar i{transition:none}}
+li span:last-child{flex:none;display:inline-flex;align-items:center;gap:7px;font-weight:600}
+li span:last-child::before{content:"";width:15px;height:15px;background:currentColor;-webkit-mask:var(--hex-line) center/contain no-repeat;
+  mask:var(--hex-line) center/contain no-repeat}
+li .ok::before,li .fail::before{-webkit-mask-image:var(--hex-fill);mask-image:var(--hex-fill)}
+li .ok{color:var(--good)}li .fail{color:var(--bad)}li .wait{color:var(--muted)}li .up{color:var(--orange)}
+:root{--hex-line:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2.5l8.2 4.75v9.5L12 21.5l-8.2-4.75v-9.5z' fill='none' stroke='%23000' stroke-width='3' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --hex-fill:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2.5l8.2 4.75v9.5L12 21.5l-8.2-4.75v-9.5z'/%3E%3C/svg%3E")}
+.tips{margin-top:36px;padding-top:20px;border-top:1px solid var(--rule);font-size:15px}
+.skyline{display:block;width:calc(100% + 40px);max-width:600px;height:auto;margin:40px -20px 0}
+@media(min-width:640px){.skyline{margin:48px auto 0;width:100%}}
+.tips ul{margin:0}.tips li{display:block;position:relative;border:0;padding:5px 0 5px 24px;color:var(--muted)}
+.tips li::before{content:"";position:absolute;left:0;top:10px;width:12px;height:12px;background:var(--orange);
+  -webkit-mask:var(--hex-line) center/contain no-repeat;mask:var(--hex-line) center/contain no-repeat}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style></head>
-<body><main>
+<body>__ART__<main>
 __HEADING__
 <section id="login">
   <p>Digite o código que você recebeu da organização.</p>
@@ -173,7 +205,7 @@ __HEADING__
     <li>Aceitamos JPEG, HEIC, PNG e DNG, até 200 MB por foto.</li>
   </ul></div>
 </section>
-</main>
+__SKYLINE__</main>
 <script>
 const $=id=>document.getElementById(id),PARALLEL=3;
 let code=localStorage.getItem("inboxCode")||"",queue=[],lock=null;
@@ -194,7 +226,7 @@ $("retry").onclick=()=>{queue.forEach(i=>{if(i.state==="fail")mark(i,"wait","na 
 function mark(item,state,text){item.state=state;const s=item.li.lastChild;s.className=state==="done"?"ok":state;s.textContent=text;summary();}
 function summary(){const done=queue.filter(i=>i.state==="done").length,fail=queue.filter(i=>i.state==="fail").length;
   $("summary").textContent=done+" de "+queue.length+" enviadas"+(fail?" · "+fail+" com falha":"");
-  $("barFill").style.width=(queue.length?100*done/queue.length:0)+"%";$("retry").hidden=!fail||queue.some(i=>i.state==="up");}
+  $("barFill").style.transform="scaleX("+(queue.length?done/queue.length:0)+")";$("retry").hidden=!fail||queue.some(i=>i.state==="up");}
 async function upload(item){mark(item,"up","enviando…");
   try{const f=item.file,form=await api("/sign",{code,name:f.name,size:f.size,modified:f.lastModified,type:f.type});
     const body=new FormData();Object.entries(form.fields).forEach(([k,v])=>body.append(k,v));body.append("file",f);

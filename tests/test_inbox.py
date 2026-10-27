@@ -137,3 +137,13 @@ def test_deployed_source_carries_the_event_name():
     namespace = {}
     exec(compile(app_source("Jantar — AWS"), "index.py", "exec"), namespace)
     assert namespace["EVENT_NAME"] == "Jantar — AWS"
+
+
+def test_deployed_page_wears_the_event_artwork():
+    from event_photos import brand
+    from event_photos.inbox import app_source
+    namespace = {}
+    exec(compile(app_source("Jantar — AWS"), "index.py", "exec"), namespace)
+    html = namespace["page"]()
+    assert "data:font/woff2;base64," in html and 'class="logo"' in html and "__" not in html
+    assert brand.TOKENS.removesuffix("}").removeprefix(":root{") in inbox_app.PAGE  # same colors as the gallery

@@ -15,6 +15,7 @@ import zipfile
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from . import brand
 from .gallery import OWNER_SEP
 from .imageio import read_capture_times
 from .publish import AWS_PROFILE, stack_outputs
@@ -26,12 +27,15 @@ CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L: codes are re
 
 
 def app_source(event_name: str) -> str:
-    """The upload page's Lambda code with the event's name baked in (the page shows it)."""
-    line = 'EVENT_NAME = ""'
+    """The upload page's Lambda code with the event's name and artwork baked in (the page shows both)."""
+    art = brand.assets()
     source = APP.read_text(encoding="utf-8")
-    if line not in source:
-        raise RuntimeError(f"{APP.name}: {line} not found")
-    return source.replace(line, f"EVENT_NAME = {json.dumps(event_name, ensure_ascii=False)}", 1)
+    for line, value in (('EVENT_NAME = ""', event_name), ("BRAND: dict = {}", art)):
+        if line not in source:
+            raise RuntimeError(f"{APP.name}: {line} not found")
+        name = line.split(" ")[0].rstrip(":")
+        source = source.replace(line, f"{name} = {json.dumps(value, ensure_ascii=False)}", 1)
+    return source
 
 
 def new_code() -> str:
