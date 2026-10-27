@@ -8,7 +8,7 @@ import urllib.request
 import pytest
 
 from event_photos import review as review_mod
-from event_photos.review import load_minors, load_review, review
+from event_photos.review import _page, load_minors, load_review, load_seen, review
 
 TOKEN = "t0ken"
 
@@ -60,6 +60,34 @@ def test_minors_are_kept_when_the_mark_is_not_offered(tmp_path):
     (run / "review.json").write_text(json.dumps({"keep": {}, "minors": ["a.jpg"]}))
     approve(run, {"keep": {"a.jpg": True, "b.jpg": True}}, 8792)
     assert load_minors(run) == {"a.jpg"} and "Tem menor" not in (run / "review.html").read_text()
+
+
+def test_approval_records_every_photo_on_the_page_as_seen(tmp_path):
+    run = run_dir_with(tmp_path)
+    approve(run, {"keep": {"a.jpg": True}}, 8794)
+    assert load_seen(run) == {"a.jpg", "b.jpg"}
+
+
+def rows(*names):
+    return [{"name": n, "output": n, "keep": True, "auto_keep": True, "reasons": [], "flags": [],
+             "adjustments": None, "capture_time": None} for n in names]
+
+
+def test_photos_since_the_last_review_come_first_with_a_badge_and_the_rest_fold_away():
+    html = _page("T", rows("old.jpg", "fresh.jpg"), "", seen={"old.jpg"})
+    new_part, seen_part = html.split('<details id="seen">')
+    assert 'data-name="fresh.jpg"' in new_part and 'class="new">Nova<' in new_part
+    assert 'data-name="old.jpg"' in seen_part and "Nova<" not in seen_part
+    assert "Já revisadas" in seen_part
+
+
+def test_first_review_has_no_badges_and_nothing_folded():
+    html = _page("T", rows("a.jpg"), "")
+    assert 'id="seen"' not in html and "Nova<" not in html and 'data-name="a.jpg"' in html
+
+
+def test_with_nothing_new_the_reviewed_section_starts_open():
+    assert '<details id="seen" open>' in _page("T", rows("a.jpg"), "", seen={"a.jpg"})
 
 
 def test_review_shows_face_counts(tmp_path):

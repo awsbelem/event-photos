@@ -52,8 +52,9 @@ Values that must not be versioned — the removal contact, whether face search i
 enable|disable` writes there. This repository runs three events this way: the official one and two
 rehearsals (team training, speakers' dinner).
 
-Re-runs only process new photos. Output in `out/events/<slug>/`: `uploads/`, `run/` (report, review),
-`site/` (the gallery), `instagram/` (approved frames, ready to post).
+Re-runs only process new photos, and the review lists the photos that arrived since the last approval
+first, marked "Nova", with the ones already reviewed folded below. Output in `out/events/<slug>/`: `uploads/`,
+`run/` (report, review), `site/` (the gallery), `instagram/` (approved frames, ready to post).
 
 ## AWS
 
