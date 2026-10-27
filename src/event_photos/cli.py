@@ -285,6 +285,9 @@ def face_search_cmd(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    # AWS CLI v2 pages its output through `less` on a terminal: a run over ssh -t would stop (or fail, with no
+    # less installed) at the first command whose output is not captured.
+    os.environ["AWS_PAGER"] = ""
     parser = argparse.ArgumentParser(prog="event-photos")
     sub = parser.add_subparsers(required=True)
     e = sub.add_parser("event", help="fluxo completo de um evento: envios → revisão → galeria")
