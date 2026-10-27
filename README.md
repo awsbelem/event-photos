@@ -143,6 +143,8 @@ scripts/aws.sh attach                         # the connection dropped: back int
 scripts/aws.sh status | stop | shell
 ```
 
+The instance runs the `stable` branch, which CI (`.github/workflows/ci.yml`: tests, `cfn-lint`, `shellcheck`,
+the image) fast-forwards to `main` once `main` is green, so a failing commit never reaches an event.
 The round runs in `tmux` on the instance, so a dropped connection does not stop it; `run` and `attach`
 open the review tunnel themselves (local port 8766). `.env` on the instance follows its size (one worker per
 physical core with about 1.2 GB each). An alarm stops the instance after two idle hours; `run` starts it

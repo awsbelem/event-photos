@@ -18,6 +18,7 @@ REGION=us-east-1
 STACK="${EVENT_PHOTOS_STACK:-event-photos-processing}"
 PORT=8766
 TMUX_SESSION=event-photos
+BRANCH=stable  # what CI promotes once main is green (.github/workflows/ci.yml): a failing commit never runs here
 # Kept out of the state copy: refilled from the upload inbox on every round.
 STATE_EXCLUDES=(--exclude 'uploads/*' --exclude 'uploads-dated/*' --exclude 'inbox/*')
 STATE_EXCLUDES_SH="--exclude 'uploads/*' --exclude 'uploads-dated/*' --exclude 'inbox/*'"  # same, for a remote shell
@@ -110,7 +111,7 @@ prepare() {  # slug restore
   remote "
 cloud-init status --wait >/dev/null 2>&1 || true
 cd ~/event-photos
-git fetch -q origin main && git reset -q --hard origin/main && git log -1 --format='   código: %h %s'
+git fetch -q origin $BRANCH && git reset -q --hard FETCH_HEAD && git log -1 --format='   código ($BRANCH): %h %s'
 aws --profile event-photos s3 sync --only-show-errors s3://$BUCKET/models/ models/
 ls models/*.onnx >/dev/null 2>&1 || { echo 'faltam os modelos no bucket: rode scripts/aws.sh setup' >&2; exit 1; }
 if aws --profile event-photos s3 ls s3://$BUCKET/events/$slug/event.local.json >/dev/null; then
@@ -147,7 +148,6 @@ interactive() { awsc ssm start-session --target "$IID" --document-name AWS-Start
 
 case "$action" in
   setup)
-    need_plugin
     say "modelos → bucket de trabalho"
     awsc s3 sync --only-show-errors models/ "s3://$BUCKET/models/"
     for f in events/*/event.local.json; do
@@ -156,8 +156,11 @@ case "$action" in
     ensure_running
     say "imagem (a primeira vez leva alguns minutos)"
     remote "cloud-init status --wait >/dev/null 2>&1 || true
-docker compose version --short
-cd ~/event-photos && git log -1 --format='   código: %h %s' && docker compose build -q"
+echo \"   compose \$(docker compose version --short)\"
+cd ~/event-photos
+git fetch -q origin $BRANCH && git reset -q --hard FETCH_HEAD && git log -1 --format='   código ($BRANCH): %h %s'
+aws --profile event-photos s3 sync --only-show-errors s3://$BUCKET/models/ models/
+docker compose build -q"
     echo "pronto. Uma rodada: scripts/aws.sh run <slug>"
     ;;
   size)

@@ -1,0 +1,50 @@
+# Every push and pull request: tests, template and script checks, the Docker image. A green main is then
+# fast-forwarded to `stable`, the branch the processing instance runs (scripts/aws.sh), so a commit that fails
+# here never reaches an event. No cloud credentials: the instance pulls, nothing is pushed to it.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
+      - run: uv run --frozen pytest -q
+
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
+      - run: uvx cfn-lint infra/*.yaml
+      - run: shellcheck scripts/*.sh
+
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      # The models are not in git; the image only needs the files to exist to build.
+      - run: mkdir -p models && touch models/face_detection_yunet_2023mar.onnx models/face_landmarker.task models/fivek_lut_classifier.onnx models/fivek_lut_basis.npy
+      - run: docker build -q -t event-photos:ci .
+
+  promote:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, lint, image]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      # Fast-forward only: if stable ever moved on its own, this fails instead of overwriting it.
+      - run: git push origin "$GITHUB_SHA:refs/heads/stable"

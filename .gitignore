@@ -11,3 +11,4 @@ events/*/event.local.json
 .impeccable/
 coverage/
 .env
+.claude/
