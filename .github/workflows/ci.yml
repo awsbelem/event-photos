@@ -46,5 +46,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0  # git must see that stable is an ancestor to fast-forward it
       # Fast-forward only: if stable ever moved on its own, this fails instead of overwriting it.
       - run: git push origin "$GITHUB_SHA:refs/heads/stable"
