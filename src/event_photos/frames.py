@@ -16,7 +16,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 
 FRAMES_DIR = Path(__file__).resolve().parents[2] / "assets" / "frames"
 DEFAULT_TEMPLATE = FRAMES_DIR / "aws-community-day-belem"
@@ -78,6 +78,11 @@ class FrameTemplate:
                    background=background, accent=_rgb(config.get("accent", DEFAULT_ACCENT)))
 
 
+# Bump when the way a photo sits in its frame changes: it is part of the develop cache key, so every photo is
+# framed again on the next run. 2: wide groups fitted whole fill the leftover with their own blur.
+FRAMING = 2
+
+
 def _rgb(hex_color: str) -> tuple[int, int, int]:
     h = hex_color.lstrip("#")
     return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
@@ -105,6 +110,18 @@ def face_crop_box(size: tuple[int, int], aspect: float,
     left = int(min(max(cx - cw / 2, 0), w - cw))
     top = int(min(max(cy - ch / 2, 0), h - ch))
     return left, top, left + cw, top + ch
+
+
+def _blurred_backdrop(canvas: Image.Image, photo: Image.Image, box: tuple[int, int, int, int], radius: int) -> None:
+    """The photo itself, enlarged to cover the box, blurred and darkened: what shows around a photo fitted whole,
+    instead of the frame's blank."""
+    bw, bh = box[2] - box[0], box[3] - box[1]
+    small = photo.crop(face_crop_box(photo.size, bw / bh, [])).resize((max(1, bw // 8), max(1, bh // 8)))
+    back = small.filter(ImageFilter.GaussianBlur(6)).resize((bw, bh), Image.LANCZOS)
+    back = ImageEnhance.Brightness(back).enhance(0.6)
+    mask = Image.new("L", (bw, bh), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, bw - 1, bh - 1), radius, fill=255)
+    canvas.paste(back, box[:2], mask)
 
 
 def _cuts_faces(crop: tuple[int, int, int, int], size: tuple[int, int],
@@ -136,11 +153,13 @@ def frame_photo(src: Path, dst: Path, fmt: FrameFormat, template: FrameTemplate,
 def _place_photo(canvas: Image.Image, src: Path, box: tuple[int, int, int, int],
                  faces: list[tuple[float, float, float, float]], radius: int, border: int,
                  border_color: tuple[int, int, int]) -> None:
+    window = box  # the frame's opening: its border goes around this, even when the photo inside is smaller
     bw, bh = box[2] - box[0], box[3] - box[1]
     with Image.open(src) as im:
         photo = im.convert("RGB")
     crop = face_crop_box(photo.size, bw / bh, faces)
     if _cuts_faces(crop, photo.size, faces):
+        _blurred_backdrop(canvas, photo, box, radius)
         # Wide group in a tall frame: keep everyone, trimming only the sides
         # beyond the outermost faces, and fit the result instead of cutting people.
         pad = 0.06 * photo.width
@@ -160,5 +179,5 @@ def _place_photo(canvas: Image.Image, src: Path, box: tuple[int, int, int, int],
     canvas.paste(photo, box[:2], mask)
     if border:
         ImageDraw.Draw(canvas).rounded_rectangle(
-            (box[0] - border, box[1] - border, box[2] + border - 1, box[3] + border - 1),
+            (window[0] - border, window[1] - border, window[2] + border - 1, window[3] + border - 1),
             radius + border if radius else 0, outline=border_color, width=border)

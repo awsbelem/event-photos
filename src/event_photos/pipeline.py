@@ -21,7 +21,7 @@ import cv2
 from . import analyze as analyze_mod
 from .cull import decide, group_bursts
 from .enhance import LOOKS, FiveKEnhancer, apply_lut, bake_look, read_cube
-from .frames import FORMATS, FrameTemplate, frame_photo
+from .frames import FORMATS, FRAMING, FrameTemplate, frame_photo
 from .imageio import (list_photos, load_camera_rendering, load_linear, read_capture_times, resize_long_side,
                       save_jpeg, to_uint8_srgb)
 from .report import write_report
@@ -43,7 +43,7 @@ class Settings:
     models: Path = DEFAULT_MODELS
 
     def develop_key(self) -> dict:
-        return {"enhancer": "fivek", "strength": self.strength, "look": self.look,
+        return {"enhancer": "fivek", "strength": self.strength, "look": self.look, "framing": FRAMING,
                 "frames": [_template_stamp(t) for t in self.frame_templates]}
 
 
