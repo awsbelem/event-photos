@@ -83,6 +83,8 @@ def test_a_phone_on_its_side_puts_the_photo_beside_the_controls(tmp_path):
     # Stacked, the controls left the photo 87 px of a 390 px tall screen.
     html = build_gallery(run_dir(tmp_path), tmp_path / "site", dict(EVENT)).read_text()
     assert "@media (orientation:landscape) and (max-height:540px)" in html
+    # The photo's column is only as wide as the photo: the controls get the rest, or their labels crowd.
+    assert "fit-content(calc(100vw - 360px)) minmax(360px,1fr)" in html
 
 
 def test_visitors_pick_post_or_story_when_the_photo_has_frames(tmp_path):

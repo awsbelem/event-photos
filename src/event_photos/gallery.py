@@ -509,7 +509,10 @@ footer ol{margin:8px 0 0;padding-left:20px;line-height:1.7}
 @media(hover:none){.nav-btn{display:none}}
 .controls{display:grid;gap:12px;padding:12px 12px calc(14px + env(safe-area-inset-bottom));max-width:560px;width:100%;margin:0 auto}
 .modes{display:grid;grid-template-columns:repeat(var(--n,2),1fr);padding:4px;border-radius:14px;background:var(--raised)}
-.modes.many{gap:4px}
+.modes.many{gap:4px;grid-template-columns:repeat(var(--n,2),minmax(max-content,1fr))}
+.modes.many button>span:last-child{white-space:nowrap}
+@media (max-width:359px){.modes.many{grid-template-columns:repeat(var(--n,2),1fr)}
+  .modes.many button>span:last-child{white-space:normal}}
 .modes.many button{display:flex;flex-direction:column;align-items:center;gap:5px;padding:7px 2px;font-size:13px}
 .modes.many img,.modes .none{width:40px;height:50px;border-radius:5px;object-fit:cover}
 .modes .none{display:block;background:var(--raised) center/cover}
@@ -528,16 +531,19 @@ footer ol{margin:8px 0 0;padding-left:20px;line-height:1.7}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 .modes.formats button{font-size:14px}
 /* A phone on its side: stacked, the controls left the photo 87 px of a 390 px screen. The photo takes the full
-   height on the left; the controls become a column on the right that scrolls if it does not fit. */
+   height on the left, its column only as wide as the photo; the controls take the rest (never under 360 px, or
+   their labels crowd) and scroll if they do not fit. */
 @media (orientation:landscape) and (max-height:540px){
-  .viewer.open{display:grid;grid-template-columns:minmax(0,1fr) min(320px,42vw);grid-template-rows:auto minmax(0,1fr)}
+  .viewer.open{display:grid;grid-template-columns:fit-content(calc(100vw - 360px)) minmax(360px,1fr);
+    grid-template-rows:auto minmax(0,1fr)}
   .stage{grid-column:1;grid-row:1/3;padding-left:env(safe-area-inset-left)}
-  .top{grid-column:2;grid-row:1;padding:calc(8px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right)) 4px 12px}
+  .stage img{height:100%;width:auto}
+  .top{grid-column:2;grid-row:1;padding:calc(8px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right)) 4px 16px}
   .controls{grid-column:2;grid-row:2;align-content:start;overflow-y:auto;max-width:none;margin:0;
-    padding:4px calc(12px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) 12px}
-  .toast{left:auto;right:calc(min(320px,42vw) / 2);max-width:calc(min(320px,42vw) - 24px);
-    bottom:calc(16px + env(safe-area-inset-bottom));transform:translate(50%,8px)}
-  .toast.show{transform:translate(50%,0)}
+    padding:4px calc(16px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) 16px}
+  .toast{left:auto;right:calc(16px + env(safe-area-inset-right));max-width:300px;
+    bottom:calc(16px + env(safe-area-inset-bottom));transform:translateY(8px)}
+  .toast.show{transform:none}
 }
 """.replace("FONT", brand.FONT_STACK)
 
