@@ -7,8 +7,9 @@
 #
 # Run it again with the full list whenever an event is added.
 set -euo pipefail
-[ $# -gt 0 ] && [ -n "${PUBLISHER_USER:-}" ] || {
-  echo "usage: PUBLISHER_USER=<iam user> $0 <event slug>..." >&2; exit 1; }
+if [ $# -eq 0 ] || [ -z "${PUBLISHER_USER:-}" ]; then
+  echo "usage: PUBLISHER_USER=<iam user> $0 <event slug>..." >&2; exit 1
+fi
 region=us-east-1
 stack=event-photos-processing
 account=$(aws sts get-caller-identity --query Account --output text)
