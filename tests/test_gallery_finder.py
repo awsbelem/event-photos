@@ -69,3 +69,29 @@ def test_page_carries_its_artwork_inline(tmp_path):
     html = build_gallery(run_dir(tmp_path), tmp_path / "site", dict(EVENT)).read_text()
     assert "data:font/woff2;base64," in html and "data:image/svg+xml;base64," in html  # one file, no requests
     assert 'class="moment plain"' in html and 'class="now' not in html  # no schedule: no timeline, no bar
+
+
+def framed_run(tmp_path):
+    run = run_dir(tmp_path)
+    metrics = json.loads((run / "metrics.json").read_text())
+    metrics["stats"]["frames"] = [{"key": "x", "label": "X"}, {"key": "y", "label": "Y"}]
+    (run / "metrics.json").write_text(json.dumps(metrics))
+    return run
+
+
+def test_a_phone_on_its_side_puts_the_photo_beside_the_controls(tmp_path):
+    # Stacked, the controls left the photo 87 px of a 390 px tall screen.
+    html = build_gallery(run_dir(tmp_path), tmp_path / "site", dict(EVENT)).read_text()
+    assert "@media (orientation:landscape) and (max-height:540px)" in html
+
+
+def test_visitors_pick_post_or_story_when_the_photo_has_frames(tmp_path):
+    html = build_gallery(framed_run(tmp_path), tmp_path / "site", dict(EVENT)).read_text()
+    assert 'aria-label="Formato"' in html
+    assert 'data-format="feed"' in html and "Post (4:5)" in html
+    assert 'data-format="story"' in html and "Story (9:16)" in html
+
+
+def test_no_format_choice_without_frames(tmp_path):
+    html = build_gallery(run_dir(tmp_path), tmp_path / "site", dict(EVENT)).read_text()
+    assert 'aria-label="Formato"' not in html

@@ -248,6 +248,18 @@ def _modes(designs: list[dict]) -> str:
             + "</button></div>")
 
 
+FORMAT_LABELS = {"feed": "Post (4:5)", "story": "Story (9:16)"}
+
+
+def _formats(designs: list[dict]) -> str:
+    """Post or story for a framed photo; the viewer presses the one that fits the photo until the visitor picks."""
+    if not designs:
+        return ""
+    buttons = "".join(f'<button data-format="{f}" aria-pressed="false">{FORMAT_LABELS[f]}</button>'
+                      for f in FRAME_FORMATS)
+    return f'<div class="modes formats" role="group" aria-label="Formato" style="--n:{len(FRAME_FORMATS)}">{buttons}</div>'
+
+
 TILE_BATCH = 60  # divides by every column count the grid uses (2 to 6), so batches end on a full row
 
 # Tiles are added a batch at a time as the visitor scrolls: a gallery of thousands of photos keeps a few hundred
@@ -514,6 +526,19 @@ footer ol{margin:8px 0 0;padding-left:20px;line-height:1.7}
   font-size:15px;font-weight:600;box-shadow:0 8px 24px #000a;opacity:0;pointer-events:none;
   transition:opacity .2s,transform .3s cubic-bezier(.16,1,.3,1)}
 .toast.show{opacity:1;transform:translate(-50%,0)}
+.modes.formats button{font-size:14px}
+/* A phone on its side: stacked, the controls left the photo 87 px of a 390 px screen. The photo takes the full
+   height on the left; the controls become a column on the right that scrolls if it does not fit. */
+@media (orientation:landscape) and (max-height:540px){
+  .viewer.open{display:grid;grid-template-columns:minmax(0,1fr) min(320px,42vw);grid-template-rows:auto minmax(0,1fr)}
+  .stage{grid-column:1;grid-row:1/3;padding-left:env(safe-area-inset-left)}
+  .top{grid-column:2;grid-row:1;padding:calc(8px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right)) 4px 12px}
+  .controls{grid-column:2;grid-row:2;align-content:start;overflow-y:auto;max-width:none;margin:0;
+    padding:4px calc(12px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) 12px}
+  .toast{left:auto;right:calc(min(320px,42vw) / 2);max-width:calc(min(320px,42vw) - 24px);
+    bottom:calc(16px + env(safe-area-inset-bottom));transform:translate(50%,8px)}
+  .toast.show{transform:translate(50%,0)}
+}
 """.replace("FONT", brand.FONT_STACK)
 
 # The sticky bar names the moment on screen and lights every node already reached: the day fills in as it is scrolled.
@@ -633,6 +658,7 @@ def _page(event: dict, photos: list[GalleryPhoto], designs: list[dict]) -> str:
     <button class="icon-btn nav-btn next" aria-label="Próxima foto">{_icon("next")}</button></div>
   <div class="controls">
     {_modes(designs)}
+    {_formats(designs)}
     <div class="actions"><button class="btn primary share" hidden>Salvar ou postar</button><a class="btn download" download>Baixar arquivo</a></div>
     {tag}
   </div>
@@ -645,12 +671,15 @@ let VIEW=PHOTOS; /* the photos the viewer walks through: all of them, or the fac
 const viewer=document.querySelector(".viewer"),stage=viewer.querySelector(".stage"),img=stage.querySelector("img"),
   failed=stage.querySelector(".failed"),count=viewer.querySelector(".count"),where=viewer.querySelector(".vm"),
   dl=viewer.querySelector(".download"),share=viewer.querySelector(".share"),modesBox=viewer.querySelector(".modes"),
+  formatsBox=viewer.querySelector(".formats"),
   toast=document.querySelector(".toast"),toTop=document.querySelector(".to-top"),
   behind=[...document.querySelectorAll("header,nav,main,footer,.to-top,.found")];
-const modes=[...modesBox.querySelectorAll("button")];
-let index=-1,lastFocus=null,mode=modes[0].dataset.mode,busy=false,toastTimer=0;
-/* Feed or story follows the photo: vertical photos are what people post as stories. */
-function frameOf(p){{if(!p.f.length)return null;const pref=p.v?"story":"feed";return p.f.includes(pref)?pref:p.f[0];}}
+const modes=[...modesBox.querySelectorAll("button")],formats=formatsBox?[...formatsBox.querySelectorAll("button")]:[];
+let index=-1,lastFocus=null,mode=modes[0].dataset.mode,format=null,busy=false,toastTimer=0;
+/* Post or story: the visitor's pick once there is one, else it follows the photo (vertical ones are what people
+   post as stories). */
+function frameOf(p){{if(!p.f.length)return null;const pref=format||(p.v?"story":"feed");
+  return p.f.includes(pref)?pref:p.f[0];}}
 function current(p){{const f=mode!=="photo"?frameOf(p):null,u=f+"/"+mode+"/"+p.id+".jpg";
   return f?{{src:u,file:u,name:p.id+"-"+mode+"-"+f+".jpg"}}
   :{{src:"view/"+p.id+".webp",file:"photos/"+p.id+".jpg",name:p.id+".jpg"}};}}
@@ -659,6 +688,8 @@ function say(text){{toast.textContent=text;toast.classList.add("show");clearTime
 function show(i){{
   index=(i+VIEW.length)%VIEW.length;const p=VIEW[index],c=current(p),mo=MOMENTS[p.m];
   modesBox.hidden=!p.f.length;modes.forEach(b=>b.setAttribute("aria-pressed",b.dataset.mode===(p.f.length?mode:"photo")));
+  if(formatsBox){{const f=frameOf(p);formatsBox.hidden=mode==="photo"||p.f.length<2;
+    formats.forEach(b=>b.setAttribute("aria-pressed",b.dataset.format===f));}}
   failed.hidden=true;stage.classList.add("loading");img.alt=p.a;img.src=c.src;
   if(img.complete&&img.naturalWidth)stage.classList.remove("loading");
   dl.href=c.file;dl.setAttribute("download",c.name);
@@ -689,6 +720,7 @@ document.querySelector("main").addEventListener("click",e=>{{const t=e.target.cl
 viewer.querySelector(".prev").onclick=()=>show(index-1);viewer.querySelector(".next").onclick=()=>show(index+1);
 viewer.querySelector(".close").onclick=close;
 modes.forEach(b=>b.onclick=()=>{{mode=b.dataset.mode;show(index);}});
+formats.forEach(b=>b.onclick=()=>{{format=b.dataset.format;show(index);}});
 document.addEventListener("keydown",e=>{{if(!viewer.classList.contains("open"))return;
   if(e.key==="Escape")close();if(e.key==="ArrowLeft")show(index-1);if(e.key==="ArrowRight")show(index+1);
   if(e.key==="Tab"){{const f=[...viewer.querySelectorAll("button,a[href]")].filter(el=>!el.hidden&&el.offsetParent);
