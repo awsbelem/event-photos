@@ -154,11 +154,13 @@ round_command() { echo "sudo -iu ec2-user tmux new-session -A -s $TMUX_SESSION '
 
 tunnel() {
   ! (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null || die "a porta $PORT já está em uso aqui (outro túnel aberto?)"
-  awsc ssm start-session --target "$IID" --document-name AWS-StartPortForwardingSession \
+  # In a process group of its own: the CLI runs session-manager-plugin as a grandchild, which outlived a plain
+  # kill and kept the port taken. Closing the group closes the whole tunnel.
+  setsid aws --profile "$PROFILE" --region "$REGION" ssm start-session --target "$IID" \
+    --document-name AWS-StartPortForwardingSession \
     --parameters "$(json portNumber "$PORT" localPortNumber "$PORT")" >/dev/null 2>&1 &
   TUNNEL_PID=$!
-  # The CLI hands the tunnel to session-manager-plugin, its child: close both.
-  trap 'pkill -P "$TUNNEL_PID" 2>/dev/null; kill "$TUNNEL_PID" 2>/dev/null; true' EXIT
+  trap 'kill -- -"$TUNNEL_PID" 2>/dev/null; true' EXIT
 }
 interactive() { awsc ssm start-session --target "$IID" --document-name AWS-StartInteractiveCommand --parameters "$(json command "$1")"; }
 
