@@ -21,7 +21,6 @@ TMUX_SESSION=event-photos
 BRANCH=stable  # what CI promotes once main is green (.github/workflows/ci.yml): a failing commit never runs here
 # Kept out of the state copy: refilled from the upload inbox on every round.
 STATE_EXCLUDES=(--exclude 'uploads/*' --exclude 'uploads-dated/*' --exclude 'inbox/*')
-STATE_EXCLUDES_SH="--exclude 'uploads/*' --exclude 'uploads-dated/*' --exclude 'inbox/*'"  # same, for a remote shell
 
 usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 say() { echo "→ $*"; }
@@ -124,17 +123,34 @@ if [ ! -d out/events/$slug ] && aws --profile event-photos s3 ls s3://$BUCKET/ou
 fi
 printf '%s\n' '$env' > .env
 echo \"   \$(grep WORKERS .env)\"
+cat > ~/round.sh <<'ROUND'
+$(round_script)
+ROUND
 docker compose build -q"
 }
 
-# The round itself, inside tmux so it survives a dropped connection; the state goes to the bucket even on failure.
-round_command() {  # slug flags
-  local save="aws --profile event-photos s3 sync --only-show-errors --delete --no-follow-symlinks $STATE_EXCLUDES_SH out/events/$1 s3://$BUCKET/out/$1"
-  printf '%s' "sudo -iu ec2-user tmux new-session -A -s $TMUX_SESSION \"cd ~/event-photos; \
-docker compose run --rm --service-ports event-photos event $1 $2; s=\\\$?; \
-echo '→ salvando o estado no bucket de trabalho'; $save && echo '   estado salvo'; \
-[ \\\$s = 0 ] || echo \\\"a rodada falhou (código \\\$s)\\\"; read -rp 'Enter para fechar' _\""
+# One round on the instance; its state goes to the bucket even when the round fails. Written there as a file
+# because the session's command passes through `sudo -i`, which leaves `$` unescaped: that command holds none.
+round_script() {
+  sed "s|@BUCKET@|$BUCKET|" <<'SCRIPT'
+#!/bin/bash
+# Written by scripts/aws.sh on every run: bash round.sh <slug> [--publish]
+slug=$1; shift
+cd ~/event-photos || exit 1
+docker compose run --rm --service-ports event-photos event "$slug" "$@"
+status=$?
+echo "→ salvando o estado no bucket de trabalho"
+if aws --profile event-photos s3 sync --only-show-errors --delete --no-follow-symlinks \
+     --exclude 'uploads/*' --exclude 'uploads-dated/*' --exclude 'inbox/*' \
+     "out/events/$slug" "s3://@BUCKET@/out/$slug"; then
+  echo "   estado salvo"
+fi
+if [ "$status" -eq 0 ]; then echo "rodada concluída"; else echo "a rodada falhou (código $status)"; fi
+read -rp "Enter para fechar " _
+SCRIPT
 }
+# Inside tmux, so the round survives a dropped connection.
+round_command() { echo "sudo -iu ec2-user tmux new-session -A -s $TMUX_SESSION 'bash round.sh $1 $2'"; }
 
 tunnel() {
   ! (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null || die "a porta $PORT já está em uso aqui (outro túnel aberto?)"
