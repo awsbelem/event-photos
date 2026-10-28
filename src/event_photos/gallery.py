@@ -608,14 +608,15 @@ footer ol{margin:8px 0 0;padding-left:20px;line-height:1.7}
   transition:opacity .2s,transform .3s cubic-bezier(.16,1,.3,1)}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 .modes.formats button{font-size:14px}
-/* A phone on its side: stacked, the controls left the photo 87 px of a 390 px screen. The photo takes the full
-   height on the left, its column only as wide as the photo; the controls take the rest (never under 360 px, or
-   their labels crowd) and scroll if they do not fit. */
+/* A phone on its side: stacked, the controls left the photo 87 px of a 390 px screen. The photo gets the full height
+   on the left and the controls a fixed share on the right (never under 384 px: five frame choices need 383), scrolling
+   if they do not fit. The split never depends on the photo's own size: Safari resolved that circle with a stale
+   width after a rotation and left the photo tiny. */
 @media (orientation:landscape) and (max-height:540px){
-  .viewer.open{display:grid;grid-template-columns:fit-content(calc(100vw - 360px)) minmax(360px,1fr);
+  .viewer.open{display:grid;grid-template-columns:minmax(0,1fr) minmax(384px,42%);
     grid-template-rows:auto minmax(0,1fr)}
   .stage{grid-column:1;grid-row:1/3;padding-left:env(safe-area-inset-left)}
-  .stage img{height:100%;width:auto}
+  .stage img{width:100%;height:100%}
   .top{grid-column:2;grid-row:1;padding:calc(8px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right)) 4px 16px}
   .controls{grid-column:2;grid-row:2;align-content:start;overflow-y:auto;max-width:none;margin:0;
     padding:4px calc(16px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) 16px}
