@@ -6,6 +6,7 @@ import datetime as dt
 import json
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 from .enhance import LOOKS
@@ -68,6 +69,12 @@ def event(args: argparse.Namespace) -> None:
     site = work / "site"
     if args.publish and (face_ui := _sync_faces(config, run_dir, args.slug)):
         config["face_search_ui"] = face_ui
+    if config.get("aws_stack"):  # the venue screen's QR points at the published gallery
+        try:
+            profile = config.get("aws_profile", publish_mod.AWS_PROFILE)
+            config["url"] = publish_mod.stack_outputs(config["aws_stack"], profile)["Url"]
+        except (subprocess.CalledProcessError, KeyError, OSError):
+            print("aviso: endereço da galeria indisponível; o telão fica sem QR code")
     build_gallery(run_dir, site, config)
     _export_frames(run_dir, work / "instagram")
     print(f"galeria → {site / 'index.html'}")

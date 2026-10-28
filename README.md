@@ -46,7 +46,8 @@ uv run event-photos event <slug> --publish --skip-review   # reuse the last appr
 `heading` (the gallery's title, default `name`), `schedule` (gallery sections by moment), `photographer`, `instagram`, `frames` (folders in
 `assets/frames/`, the first is the default), `aws_profile` (default `event-photos`), `timezone` (default
 `America/Belem`), `clock_offsets` (e.g. `{"ana-souza": "-0:05"}` for a camera clock that was off),
-`strength`, `face_search`, `removal_contact`, `pages_project`.
+`strength`, `face_search`, `removal_contact`, `pages_project`, `short_url` (a short link to the gallery, for the
+venue screen's QR code).
 
 Values that must not be versioned — the removal contact, whether face search is on — go in
 `events/<slug>/event.local.json` (gitignored), which overrides event.json key by key; `face-search
@@ -60,6 +61,11 @@ first, marked "Nova", with the ones already reviewed folded below. Output in `ou
 A gallery left open sees the next publish: while it is on screen it checks `photos.json` (published beside the
 page, never cached) every minute and offers "Chegaram N fotos · Mostrar", which brings them into the page (no reload),
 goes to the first and marks the new ones "Nova" for a few seconds.
+
+**Venue screen.** `wall.html`, beside the gallery, is for a TV or projector at the venue: open it full screen on a
+notebook ("Tela cheia"; `wall.html?s=12` shows each photo 12 s instead of 8). It shows one photo at a time, whole,
+inside the event's artwork, with its time, moment and photographer, and a QR code to the gallery (the stack's
+address, or `short_url`). It reads `photos.json` every minute and shows new photos first, marked "Nova".
 
 ## AWS
 

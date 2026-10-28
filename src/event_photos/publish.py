@@ -6,11 +6,12 @@ import subprocess
 from pathlib import Path
 
 from .gallery import ASSET_FOLDERS, BEACON, ICONS, PHOTO_LIST
+from .wall import WALL
 
 AWS_PROFILE = "event-photos"  # `aws configure --profile event-photos` with the stack's publisher key
 IMMUTABLE = "public, max-age=31536000, immutable"
 REVALIDATE = "no-cache"  # pages: browsers and CloudFront check for a new version on every visit
-PAGES = ("robots.txt", PHOTO_LIST, "index.html")  # index.html last, once every photo it points to is up
+PAGES = ("robots.txt", PHOTO_LIST, WALL, "index.html")  # index.html last, once every photo it points to is up
 
 
 def cloudflare_pages(site: Path, project: str) -> None:

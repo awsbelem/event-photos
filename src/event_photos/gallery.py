@@ -19,7 +19,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from . import brand
+from . import brand, wall
 from .frames import FRAMES_DIR
 
 FRAME_FORMATS = ("feed", "story")
@@ -162,6 +162,7 @@ def build_gallery(run_dir: Path, site: Path, event: dict, clock_offset: dt.timed
     _, _, data, moments = _listing(event, photos)
     listed = {"at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), "moments": moments, "photos": data}
     (site / PHOTO_LIST).write_text(json.dumps(listed, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    (site / wall.WALL).write_text(wall.page(event, PHOTO_LIST, BEACON, ICONS), encoding="utf-8")
     (site / "robots.txt").write_text("User-agent: *\nDisallow: /\n")
     (site / BEACON).write_bytes(BEACON_GIF)
     brand.icon(32, rounded=True).save(site / ICONS[0], sizes=[(16, 16), (32, 32)])
@@ -667,7 +668,8 @@ def _listing(event: dict, photos: list[GalleryPhoto]) -> tuple[dict[str, list], 
     # Tiles are built by TILES_JS from this list ("m" = section), so the page stays small with thousands of photos.
     section_of = {title: i for i, title in enumerate(groups)}
     data = [{"id": p.id, "m": section_of[p.moment], "w": p.width, "h": p.height, "f": list(p.frames),
-             "v": p.height > p.width, "a": alts[p.id], "c": p.by} for p in photos]
+             "v": p.height > p.width, "a": alts[p.id], "c": p.by, "t": p.taken.strftime("%H:%M") if p.taken else ""}
+            for p in photos]
     moments = [{"t": starts.get(t, ""), "n": t} for t in groups]
     return groups, starts, data, moments
 
