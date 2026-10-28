@@ -115,6 +115,93 @@ Resources:
               StringEquals:
                 AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}
 
+  # CloudFront access logs for the event report (`event-photos stats`). The delivery keeps what was asked for and
+  # when, never who asked: no viewer IP, port, forwarded-for or cookies. Logging starts when this is deployed.
+  LogsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub event-photos-${AWS::AccountId}-${EventSlug}-logs
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-logs
+            Status: Enabled
+            ExpirationInDays: 90
+
+  # Written here rather than left to the delivery, which would otherwise add it on its own.
+  LogsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LogsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AWSLogDeliveryWrite
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub ${LogsBucket.Arn}/AWSLogs/${AWS::AccountId}/*
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:aws:logs:us-east-1:${AWS::AccountId}:delivery-source:*
+          - Sid: AWSLogDeliveryAclCheck
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Action: [s3:GetBucketAcl, s3:ListBucket]
+            Resource: !GetAtt LogsBucket.Arn
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:aws:logs:us-east-1:${AWS::AccountId}:delivery-source:*
+
+  LogsSource:
+    Type: AWS::Logs::DeliverySource
+    Properties:
+      Name: !Sub event-photos-${EventSlug}
+      LogType: ACCESS_LOGS
+      ResourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}
+
+  LogsDestination:
+    Type: AWS::Logs::DeliveryDestination
+    Properties:
+      Name: !Sub event-photos-${EventSlug}
+      DestinationResourceArn: !GetAtt LogsBucket.Arn
+      OutputFormat: json
+
+  LogsDelivery:
+    Type: AWS::Logs::Delivery
+    DependsOn: LogsBucketPolicy
+    Properties:
+      DeliverySourceName: !Ref LogsSource
+      DeliveryDestinationArn: !GetAtt LogsDestination.Arn
+      RecordFields:  # the counts (e.gif?e=…), what was served, and the User-Agent to tell preview bots from people
+        - date
+        - time
+        - cs-uri-stem
+        - cs-uri-query
+        - sc-status
+        - sc-bytes
+        - x-edge-location
+        - x-edge-result-type
+        - cs(User-Agent)
+
   # Photographers' uploads land here; the photographer's desktop pulls them (it is never reachable).
   InboxBucket:
     Type: AWS::S3::Bucket
@@ -251,6 +338,12 @@ Resources:
           - Effect: Allow
             Action: [lambda:UpdateFunctionCode, lambda:GetFunction]
             Resource: !GetAtt InboxFunction.Arn
+          - Effect: Allow
+            Action: s3:ListBucket
+            Resource: !GetAtt LogsBucket.Arn
+          - Effect: Allow
+            Action: s3:GetObject
+            Resource: !Sub ${LogsBucket.Arn}/*
 
 Outputs:
   BucketName:
@@ -261,6 +354,8 @@ Outputs:
     Value: !Sub https://${Distribution.DomainName}
   InboxBucketName:
     Value: !Ref InboxBucket
+  LogsBucketName:
+    Value: !Ref LogsBucket
   InboxFunctionName:
     Value: !Ref InboxFunction
   UploadUrl:

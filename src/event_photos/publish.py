@@ -5,7 +5,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from .gallery import ASSET_FOLDERS
+from .gallery import ASSET_FOLDERS, BEACON
 
 AWS_PROFILE = "event-photos"  # `aws configure --profile event-photos` with the stack's publisher key
 IMMUTABLE = "public, max-age=31536000, immutable"
@@ -36,6 +36,8 @@ def aws_commands(site: Path, bucket: str, distribution: str, profile: str = AWS_
     aws = ["aws", "--profile", profile]
     cmds = [[*aws, "s3", "sync", str(site / folder), f"s3://{bucket}/{folder}", "--cache-control", IMMUTABLE]
             for folder in ASSET_FOLDERS if (site / folder).is_dir()]
+    if (site / BEACON).is_file():  # the counts' GIF never changes; the edge answers it and the log still records it
+        cmds.append([*aws, "s3", "cp", str(site / BEACON), f"s3://{bucket}/{BEACON}", "--cache-control", IMMUTABLE])
     cmds += [[*aws, "s3", "cp", str(site / page), f"s3://{bucket}/{page}", "--cache-control", REVALIDATE]
              for page in PAGES]
     # --size-only: everything was just uploaded, so this pass only deletes leftovers

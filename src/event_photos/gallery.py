@@ -29,6 +29,11 @@ VIEW_LONG_SIDE = 1800
 OTHER_MOMENT = "Outros momentos"
 OWNER_SEP = "--"
 SCHEDULE_ADVISED_ABOVE = 60  # photos; past this, one long scroll is hard to search for yourself
+# Counts for the event report: the page requests this 1x1 GIF with the action in the query string, and CloudFront's
+# access log (which keeps no IP, see infra/aws-gallery.yaml) records it even when the edge answers from cache.
+BEACON = "e.gif"
+BEACON_GIF = (b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00"
+              b",\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;")
 MONTHS = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto",
           "setembro", "outubro", "novembro", "dezembro"]
 
@@ -153,6 +158,7 @@ def build_gallery(run_dir: Path, site: Path, event: dict, clock_offset: dt.timed
 
     (site / "index.html").write_text(_page(event, photos, designs), encoding="utf-8")
     (site / "robots.txt").write_text("User-agent: *\nDisallow: /\n")
+    (site / BEACON).write_bytes(BEACON_GIF)
     # Cloudflare Pages headers (CloudFront sets the same ones in infra/aws-gallery.yaml):
     # keep the gallery out of search engines and out of other sites' frames; photos never change.
     (site / "_headers").write_text("/*\n  X-Robots-Tag: noindex, nofollow\n  Referrer-Policy: no-referrer\n"
@@ -347,9 +353,10 @@ shoot.onclick=async()=>{const w=video.videoWidth,h=video.videoHeight;if(!w)retur
   try{const r=await fetch(cfg.url+"search",{method:"POST",headers:{"content-type":"application/json"},
       body:JSON.stringify({consent:true,image})});
     const data=await r.json().catch(()=>({error:"Busca indisponível agora. Tente de novo em instantes."}));
-    if(!r.ok){tell(data.error);return;}
-    const ids=new Set(data.photos.map(x=>cfg.ids[x]||x));
-    if(!PHOTOS.some(p=>ids.has(p.id))){tell(data.message||"Ainda não achamos fotos suas.");return;}
+    if(!r.ok){hit("find",{n:"erro"});tell(data.error);return;}
+    const ids=new Set(data.photos.map(x=>cfg.ids[x]||x)),n=PHOTOS.filter(p=>ids.has(p.id)).length;
+    hit("find",{n:n?n<6?"1-5":"6+":"0"});  /* how many were found, in ranges: nothing about the face */
+    if(!n){tell(data.message||"Ainda não achamos fotos suas.");return;}
     closeDlg();filter(ids,data.note);}
   catch(e){tell("Sem conexão com a busca. Verifique a internet e tente de novo.");}};
 function filter(ids,note){VIEW=PHOTOS.filter(p=>ids.has(p.id));layout(VIEW);
@@ -654,7 +661,8 @@ def _page(event: dict, photos: list[GalleryPhoto], designs: list[dict]) -> str:
 {nav}{found_bar}
 <main>{''.join(sections)}<noscript><p>Ative o JavaScript do navegador para ver as fotos.</p></noscript></main>
 <footer><p>{credit}Uso pessoal liberado; {mention}</p>
-<p>{removal}</p>{notice}{credits}<img class="skyline" src="{art["skyline"]}" alt="" width="1080" height="250"></footer>
+<p>{removal}</p>
+<p>Contamos aberturas e compartilhamentos para o relatório do evento, sem identificar ninguém.</p>{notice}{credits}<img class="skyline" src="{art["skyline"]}" alt="" width="1080" height="250"></footer>
 <button class="to-top" aria-label="Voltar ao topo">{_icon("up")}</button>
 <div class="viewer" role="dialog" aria-modal="true" aria-label="Foto ampliada">
   <div class="top"><div class="where"><span class="vm"></span><span class="count" aria-live="polite"></span></div>
@@ -681,7 +689,10 @@ const viewer=document.querySelector(".viewer"),stage=viewer.querySelector(".stag
   toast=document.querySelector(".toast"),toTop=document.querySelector(".to-top"),
   behind=[...document.querySelectorAll("header,nav,main,footer,.to-top,.found")];
 const modes=[...modesBox.querySelectorAll("button")],formats=formatsBox?[...formatsBox.querySelectorAll("button")]:[];
-let index=-1,lastFocus=null,mode=modes[0].dataset.mode,format=null,busy=false,toastTimer=0;
+let index=-1,lastFocus=null,mode=modes[0].dataset.mode,format=null,busy=false,toastTimer=0,seen=null;
+/* One count per action for the event report; nothing in it identifies the visitor, and a lost count is fine. */
+function hit(e,x){{try{{fetch("{BEACON}?"+new URLSearchParams({{e,...x,r:Math.random().toString(36).slice(2,8)}}),
+  {{keepalive:true,cache:"no-store"}}).catch(()=>{{}});}}catch(_){{}}}}
 /* Post or story: the visitor's pick once there is one, else it follows the photo (vertical ones are what people
    post as stories). */
 function frameOf(p){{if(!p.f.length)return null;const pref=format||(p.v?"story":"feed");
@@ -689,6 +700,8 @@ function frameOf(p){{if(!p.f.length)return null;const pref=format||(p.v?"story":
 function current(p){{const f=mode!=="photo"?frameOf(p):null,u=f+"/"+mode+"/"+p.id+".jpg";
   return f?{{src:u,file:u,name:p.id+"-"+mode+"-"+f+".jpg"}}
   :{{src:"view/"+p.id+".webp",file:"photos/"+p.id+".jpg",name:p.id+".jpg"}};}}
+/* What the visitor took: f = the frame design ("" for the plain photo), m = post, story or the plain photo. */
+function what(p){{const f=p.f.length&&mode!=="photo"?frameOf(p):null;return {{id:p.id,f:f?mode:"",m:f||"photo"}};}}
 function say(text){{toast.textContent=text;toast.classList.add("show");clearTimeout(toastTimer);
   toastTimer=setTimeout(()=>toast.classList.remove("show"),3500);}}
 function show(i){{
@@ -705,6 +718,7 @@ function show(i){{
   count.textContent=(index+1)+" de "+VIEW.length+(p.c?" · Foto: "+p.c:"");
   const next=VIEW[(index+1)%VIEW.length];new Image().src=current(next).src;
   history.replaceState({{viewer:1}},"","#foto="+p.id);
+  if(p.id!==seen){{seen=p.id;hit("photo",{{id:p.id}});}}
 }}
 img.onload=()=>stage.classList.remove("loading");
 img.onerror=()=>{{stage.classList.remove("loading");failed.hidden=false;}};
@@ -712,7 +726,7 @@ function open(id,push){{lastFocus=document.activeElement;
   if(push)history.pushState({{viewer:1}},"","#foto="+id);
   viewer.classList.add("open");document.body.style.overflow="hidden";behind.forEach(e=>e.inert=true);
   if(!VIEW.some(p=>p.id===id))VIEW=PHOTOS;show(Math.max(0,VIEW.findIndex(p=>p.id===id)));viewer.querySelector(".close").focus();}}
-function hide(){{viewer.classList.remove("open");document.body.style.overflow="";behind.forEach(e=>e.inert=false);
+function hide(){{seen=null;viewer.classList.remove("open");document.body.style.overflow="";behind.forEach(e=>e.inert=false);
   lastFocus&&lastFocus.focus();}}
 /* Opening a photo adds a history step, so the phone's back gesture closes it instead of leaving the gallery. */
 function close(){{if(history.state&&history.state.viewer)history.back();else{{hide();history.replaceState(null,"",location.pathname);}}}}
@@ -725,8 +739,9 @@ document.querySelector("main").addEventListener("click",e=>{{const t=e.target.cl
   if(t){{e.preventDefault();open(t.dataset.id,true);}}}});
 viewer.querySelector(".prev").onclick=()=>show(index-1);viewer.querySelector(".next").onclick=()=>show(index+1);
 viewer.querySelector(".close").onclick=close;
-modes.forEach(b=>b.onclick=()=>{{mode=b.dataset.mode;show(index);}});
-formats.forEach(b=>b.onclick=()=>{{format=b.dataset.format;show(index);}});
+modes.forEach(b=>b.onclick=()=>{{mode=b.dataset.mode;show(index);hit("frame",what(VIEW[index]));}});
+formats.forEach(b=>b.onclick=()=>{{format=b.dataset.format;show(index);hit("frame",what(VIEW[index]));}});
+dl.addEventListener("click",()=>hit("save",what(VIEW[index])));
 document.addEventListener("keydown",e=>{{if(!viewer.classList.contains("open"))return;
   if(e.key==="Escape")close();if(e.key==="ArrowLeft")show(index-1);if(e.key==="ArrowRight")show(index+1);
   if(e.key==="Tab"){{const f=[...viewer.querySelectorAll("button,a[href]")].filter(el=>!el.hidden&&el.offsetParent);
@@ -743,17 +758,18 @@ if(navigator.canShare&&navigator.canShare({{files:[probe]}})){{share.hidden=fals
   if(busy)return;busy=true;share.disabled=true;share.textContent="Preparando…";
   const p=VIEW[index],c=current(p);
   try{{const res=await fetch(c.file);if(!res.ok)throw new Error(res.status);
-    await navigator.share({{files:[new File([await res.blob()],c.name,{{type:"image/jpeg"}})]}});}}
+    await navigator.share({{files:[new File([await res.blob()],c.name,{{type:"image/jpeg"}})]}});hit("share",what(p));}}
   catch(e){{if(e.name!=="AbortError")say("Não deu para abrir o compartilhamento. Tente “Baixar arquivo”.");}}
   finally{{busy=false;share.disabled=false;share.textContent="Salvar ou postar";}}}};}}
 else{{dl.classList.add("primary");dl.textContent="Baixar foto";}}
 const copyTag=document.querySelector(".copy-tag");
-if(copyTag)copyTag.onclick=async()=>{{try{{await navigator.clipboard.writeText(copyTag.dataset.tag);
+if(copyTag)copyTag.onclick=async()=>{{hit("tag");try{{await navigator.clipboard.writeText(copyTag.dataset.tag);
   say(copyTag.dataset.tag+" copiado. Cole na legenda ao postar.");}}catch(e){{say("Marque "+copyTag.dataset.tag+" ao postar.");}}}};
 toTop.onclick=()=>scrollTo({{top:0}});
 addEventListener("scroll",()=>toTop.classList.toggle("show",scrollY>innerHeight*1.5),{{passive:true}});
 const m=location.hash.match(/^#foto=(.+)$/);
 if(m){{history.replaceState(null,"",location.pathname);open(decodeURIComponent(m[1]),true);}}
+hit("open");
 {FINDER_JS if find_button else ""}
 </script>
 </body></html>"""

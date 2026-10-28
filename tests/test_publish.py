@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from event_photos.gallery import BEACON
 from event_photos.publish import IMMUTABLE, REVALIDATE, aws_commands
 
 
@@ -16,6 +17,14 @@ def test_photos_go_up_before_the_page_that_shows_them(tmp_path):
     index = next(i for i, c in enumerate(cmds) if c.endswith("s3://b/index.html --cache-control " + REVALIDATE))
     photo_syncs = [i for i, c in enumerate(cmds) if IMMUTABLE in c]
     assert len(photo_syncs) == 5 and max(photo_syncs) < index
+
+
+def test_the_counting_gif_goes_up_cached_before_the_page_that_requests_it(tmp_path):
+    (tmp_path / BEACON).write_bytes(b"GIF89a")
+    cmds = [" ".join(c) for c in aws_commands(site(tmp_path), "b", "D1")]
+    beacon = next(i for i, c in enumerate(cmds) if f"s3://b/{BEACON} --cache-control {IMMUTABLE}" in c)
+    index = next(i for i, c in enumerate(cmds) if "s3://b/index.html" in c)
+    assert beacon < index
 
 
 def test_leftovers_are_deleted_only_after_the_new_page_is_live(tmp_path):

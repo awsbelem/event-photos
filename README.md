@@ -63,14 +63,21 @@ first, marked "Nova", with the ones already reviewed folded below. Output in `ou
 
 `infra/aws-gallery.yaml` (us-east-1), one stack per event named `event-photos-<slug>`: a private bucket
 behind CloudFront (noindex, no framing), an upload inbox bucket whose uploads expire after 30 days, the
-upload page (a Lambda URL that hands out one-file upload permissions), and a publisher policy that can
-only publish this gallery and collect this inbox.
+upload page (a Lambda URL that hands out one-file upload permissions), a logs bucket for the event report,
+and a publisher policy that can only publish this gallery, collect this inbox and read these logs.
+
+**Counts for the event report.** The gallery requests `e.gif?e=<action>` when a visitor opens the gallery or a
+photo, picks a frame, saves, shares, copies the @ or ends a selfie search (only the size of the result, in
+ranges). CloudFront's access log (standard logging v2, JSON, kept 90 days) records date, time, path, query,
+status, bytes, edge, cache result and User-Agent; never the viewer's IP, port or cookies, and the page keeps no
+identifier, so the counts are of actions, not people. The footer says so. Logging starts when the stack is
+deployed, so update the stacks before the event.
 
 Create the stacks from AWS CloudShell with `scripts/cloudshell_event_stacks.sh` (gallery and face search,
 for several events at once; see its header). With `PUBLISHER_USER=<an existing publisher>`, new events
 are granted to that IAM user (`PublisherUser` parameter of both templates), so one access key, stored
-with `aws configure --profile event-photos`, runs every event. To take an event down, empty both buckets
-and delete its stacks. (`pages_project` publishes to Cloudflare Pages instead, without the upload page or
+with `aws configure --profile event-photos`, runs every event. To take an event down, empty its three
+buckets and delete its stacks. (`pages_project` publishes to Cloudflare Pages instead, without the upload page or
 face search.)
 
 ### Photographers
