@@ -66,6 +66,9 @@ goes to the first and marks the new ones "Nova" for a few seconds.
 notebook ("Tela cheia"; `wall.html?s=12` shows each photo 12 s instead of 8). It shows one photo at a time, whole,
 inside the event's artwork, with its time, moment and photographer, and a QR code to the gallery (the stack's
 address, or `short_url`). It reads `photos.json` every minute and shows new photos first, marked "Nova".
+It is the one page another site may put in an iframe (the gallery, upload and search pages refuse it); give the
+iframe `allow="fullscreen; screen-wake-lock"` so "Tela cheia" shows and the screen stays on. On AWS this takes a
+stack deploy (`infra/aws-gallery.yaml`, `WallHeadersPolicy`).
 
 **Fun version.** "Divertida", beside the frames in the viewer, draws the photo in the visitor's browser with a
 colorful border, a navy band under it (logo, date and place, the drawing of Belém and the skyline) and two or three

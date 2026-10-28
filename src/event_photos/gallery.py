@@ -183,9 +183,13 @@ def build_gallery(run_dir: Path, site: Path, event: dict, clock_offset: dt.timed
     brand.icon(32, rounded=True).save(site / ICONS[0], sizes=[(16, 16), (32, 32)])
     brand.icon(180, rounded=False).save(site / ICONS[1])
     # Cloudflare Pages headers (CloudFront sets the same ones in infra/aws-gallery.yaml):
-    # keep the gallery out of search engines and out of other sites' frames; photos never change.
+    # keep the gallery out of search engines and out of other sites' frames, except the venue screen, which any site
+    # may embed (Pages also serves it without ".html"); photos never change.
+    wall_paths = (f"/{wall.WALL}", f"/{wall.WALL.removesuffix('.html')}")
     (site / "_headers").write_text("/*\n  X-Robots-Tag: noindex, nofollow\n  Referrer-Policy: no-referrer\n"
                                    "  X-Frame-Options: DENY\n  Content-Security-Policy: frame-ancestors 'none'\n"
+                                   + "".join(f"{path}\n  ! X-Frame-Options\n  ! Content-Security-Policy\n"
+                                             for path in wall_paths)
                                    + "".join(f"/{folder}/*\n  Cache-Control: public, max-age=31536000, immutable\n"
                                              for folder in ASSET_FOLDERS))
     return site / "index.html"

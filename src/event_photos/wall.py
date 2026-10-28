@@ -133,6 +133,7 @@ let idle=0;function awake(){document.body.classList.remove("idle");clearTimeout(
   idle=setTimeout(()=>document.body.classList.add("idle"),3000);}
 addEventListener("pointermove",awake);awake();
 go.onclick=()=>{document.documentElement.requestFullscreen?.().catch(()=>{});};
+if(!document.fullscreenEnabled)go.hidden=true;  /* framed by a page that did not allow it: the button would do nothing */
 document.addEventListener("fullscreenchange",()=>document.body.classList.toggle("full",!!document.fullscreenElement));
 let lock=null;async function keepOn(){try{lock=await navigator.wakeLock?.request("screen");}catch(e){}}
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")keepOn();});

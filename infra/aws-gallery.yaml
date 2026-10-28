@@ -73,6 +73,28 @@ Resources:
             AccessControlMaxAgeSec: 31536000
             Override: true
 
+  # The venue screen alone may be framed, by any site (event pages, signage players): it has no buttons that act
+  # for the visitor and shows only the gallery's public photos.
+  WallHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub event-photos-${EventSlug}-wall
+        CustomHeadersConfig:
+          Items:
+            - Header: X-Robots-Tag
+              Value: noindex, nofollow
+              Override: true
+        SecurityHeadersConfig:
+          ReferrerPolicy:
+            ReferrerPolicy: no-referrer
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 31536000
+            Override: true
+
   Distribution:
     Type: AWS::CloudFront::Distribution
     Properties:
@@ -97,6 +119,15 @@ Resources:
           Compress: true
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # Managed-CachingOptimized (honors Cache-Control)
           ResponseHeadersPolicyId: !Ref HeadersPolicy
+        CacheBehaviors:
+          - PathPattern: wall.html
+            TargetOriginId: site
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+            ResponseHeadersPolicyId: !Ref WallHeadersPolicy
 
   SiteBucketPolicy:
     Type: AWS::S3::BucketPolicy

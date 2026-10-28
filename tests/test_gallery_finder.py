@@ -44,6 +44,9 @@ def test_names_cannot_end_the_script_block_and_pages_cannot_be_framed(tmp_path):
     assert html.count("</script>") == 1 and "\\u003c/script>" in html  # the block ends only where we end it
     headers = (site / "_headers").read_text()
     assert "X-Frame-Options: DENY" in headers and "frame-ancestors 'none'" in headers
+    # Only the venue screen may be embedded, by any site.
+    for path in ("/wall.html", "/wall"):
+        assert f"{path}\n  ! X-Frame-Options\n  ! Content-Security-Policy\n" in headers
 
 
 def test_tiles_are_built_in_batches_by_the_script(tmp_path):
