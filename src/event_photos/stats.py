@@ -33,6 +33,7 @@ SERVED = {"200", "206", "304"}
 HIGHLIGHTS = 12
 WALL_PING = 15  # minutes between the venue screen's `e=wall` counts (wall.py)
 FIND_BUCKETS = ("0", "1-5", "6+", "erro")
+KEEP_ROWS = 15  # printed, a table up to this long never splits across pages
 
 
 @dataclass(frozen=True)
@@ -167,7 +168,7 @@ CSS = """
 header{background:var(--navy);color:#fff;padding:28px 40px}header img{height:56px;display:block;margin-bottom:14px}
 header h1{margin:0;font-size:28px;letter-spacing:-.02em}header p{margin:4px 0 0;color:var(--muted)}
 main{max-width:1040px;margin:0 auto;padding:12px 40px 48px}
-h2{margin:36px 0 6px;font-size:21px;letter-spacing:-.01em;border-bottom:3px solid var(--orange);display:inline-block}
+h2{margin:36px 0 6px;font-size:21px;letter-spacing:-.01em;border-bottom:3px solid var(--orange);width:fit-content}
 .lead{color:#4a5568;margin:4px 0 14px}
 .stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
 .stat{background:#fff;border:1px solid #e2e5eb;border-radius:12px;padding:12px 14px;break-inside:avoid}
@@ -182,8 +183,17 @@ td.n,th.n{text-align:right}.bar{display:inline-block;height:10px;background:var(
 .photos figcaption{padding:6px 8px;font-size:12px;color:#4a5568}.photos figcaption b{color:var(--navy)}
 .notes{background:#fff;border-left:4px solid var(--orange);padding:12px 16px;margin-top:14px;font-size:14px}
 .notes li{margin:4px 0}
-@media print{body{background:#fff}header{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  .bar{-webkit-print-color-adjust:exact;print-color-adjust:exact}h2{break-after:avoid}section{break-inside:avoid-page}}
+.cover{padding-top:20px}.cover .stats{grid-template-columns:repeat(4,1fr)}.cover .stat b{font-size:34px}
+.chart{background:#fff;border:1px solid #e2e5eb;border-radius:12px;padding:14px 16px 10px;margin-top:12px;break-inside:avoid}
+.chart h3{margin:0 0 2px;font-size:15px}.chart p{margin:0 0 8px;color:#4a5568;font-size:13px}
+.chart svg{display:block;width:100%;height:auto;overflow:visible}.chart svg text{font:14px FONT;fill:#4a5568}
+.chart svg .v{fill:#091b33;font-weight:700}.col{fill:var(--orange)}.col:hover{fill:#d96f0b}
+.rows{display:grid;grid-template-columns:max-content 1fr max-content;gap:6px 12px;align-items:center;font-size:14px}
+.rows i{display:block;height:14px;background:var(--orange);border-radius:0 4px 4px 0;min-width:2px}
+.rows b{font-variant-numeric:tabular-nums;text-align:right}
+h3{font-size:16px;margin:18px 0 0}
+@media print{body{background:#fff}header,.bar,.col,.rows i{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .cover{break-after:page}tr,.stats,.notes,.keep{break-inside:avoid}}
 """.replace("FONT", brand.FONT_STACK)
 
 
@@ -212,8 +222,82 @@ def _table(head: tuple[str, ...], rows: list[tuple], bars: int | None = None) ->
                 cells.append(f"<td>{escape(str(v))}</td>")
         body.append("<tr>" + "".join(cells) + "</tr>")
     numeric = [isinstance(v, (int, float)) or v is None for v in rows[0]]
-    return ("<table><tr>" + "".join(f'<th{" class=n" if k else ""}>{escape(h)}</th>' for h, k in zip(head, numeric))
-            + "</tr>" + "".join(body) + "</table>")
+    whole = ' class="keep"' if len(rows) <= KEEP_ROWS else ""  # a short table moves to the next page whole
+    return (f"<table{whole}><thead><tr>"
+            + "".join(f'<th{" class=n" if k else ""}>{escape(h)}</th>' for h, k in zip(head, numeric))
+            + "</tr></thead>" + "".join(body) + "</table>")
+
+
+def _hours(per_hour: dict[str, int], per_day: dict[str, int]) -> list[tuple[str, str, int]]:
+    """Opens on a continuous time axis, empty hours included, as (axis label, tooltip label, opens). Past two days
+    an hourly axis gets too dense, so it turns into one column per day."""
+    if not per_hour:
+        return []
+    first, last = (dt.datetime.strptime(h, "%Y-%m-%d %H:00") for h in (min(per_hour), max(per_hour)))
+    if last - first > dt.timedelta(hours=48):
+        start, end = (dt.date.fromisoformat(d) for d in (min(per_day), max(per_day)))
+        days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+        return [(d.strftime("%d/%m"), d.strftime("%d/%m"), per_day.get(d.isoformat(), 0)) for d in days]
+    out, at, day = [], first, None
+    while at <= last:
+        label = f"{at:%Hh}" if at.date() == day else f"{at:%d/%m %Hh}"
+        day = at.date()
+        out.append((label, f"{at:%d/%m %Hh}", per_hour.get(at.strftime("%Y-%m-%d %H:00"), 0)))
+        at += dt.timedelta(hours=1)
+    return out
+
+
+def _columns(points: list[tuple[str, str, int]], unit: tuple[str, str]) -> str:
+    """A column chart in plain SVG: one value label on the peak, the rest on hover. `unit`: singular and plural."""
+    if not points:
+        return '<p class="lead">Sem registros.</p>'
+    width, height, top, bottom = 960, 260, 24, 30
+    slot = width / len(points)
+    gap = min(8, slot * .25)
+    peak = max(n for *_, n in points) or 1
+    every = -(-len(points) // 12)  # at most 12 axis labels
+    marks, labels = [], []
+    for i, (axis, tip, n) in enumerate(points):
+        x, w = i * slot + gap / 2, slot - gap
+        h = (height - top - bottom) * n / peak
+        y = height - bottom - h
+        r = min(4, w / 2, h)
+        if n:
+            marks.append(f'<path class="col" d="M{x:.1f} {height - bottom}V{y + r:.1f}q0 -{r:.1f} {r:.1f} -{r:.1f}'
+                         f'h{w - 2 * r:.1f}q{r:.1f} 0 {r:.1f} {r:.1f}V{height - bottom}z">'
+                         f'<title>{escape(tip)}: {_n(n)} {unit[n != 1]}</title></path>')
+        if n == peak:
+            marks.append(f'<text class="v" x="{x + w / 2:.1f}" y="{y - 7:.1f}" text-anchor="middle">{_n(n)}</text>')
+        if i % every == 0:
+            labels.append(f'<text x="{x + w / 2:.1f}" y="{height - bottom + 20}" text-anchor="middle">{escape(axis)}</text>')
+    axis = f'<line x1="0" x2="{width}" y1="{height - bottom}" y2="{height - bottom}" stroke="#c9ced8"/>'
+    return (f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="Gráfico de colunas">'
+            f'{axis}{"".join(marks)}{"".join(labels)}</svg>')
+
+
+def _rows(items: list[tuple[str, int]]) -> str:
+    """Horizontal bars with the label left and the value right."""
+    top = max((n for _, n in items), default=0) or 1
+    return '<div class="rows">' + "".join(
+        f'<span>{escape(k)}</span><i style="width:{100 * n / top:.1f}%"></i><b>{_n(n)}</b>' for k, n in items) + "</div>"
+
+
+def _cover(day: dict, reach: dict, brand_: dict, find: dict) -> str:
+    spread = brand_["saved"] + brand_["shared"]
+    return f"""<section class="cover"><div class="stats">{_stat(day['published'], 'fotos publicadas')}
+{_stat(reach['opens'], 'aberturas da galeria')}{_stat(reach['photo_views'], 'fotos abertas')}
+{_stat(spread, 'fotos baixadas ou compartilhadas')}</div>
+<div class="chart"><h3>Aberturas da galeria ao longo do tempo</h3><p>Quando as pessoas entraram na galeria.</p>
+{_columns(_hours(reach['per_hour'], reach['per_day']), ('abertura', 'aberturas'))}</div>
+<div class="chart"><h3>O que as pessoas fizeram</h3><p>Ações registradas na galeria; cada uma conta uma vez por toque.</p>
+{_rows([('Abriram a galeria', reach['opens']), ('Abriram uma foto', reach['photo_views']),
+        ('Escolheram uma moldura', brand_['frame_picks']), ('Trocaram os stickers', brand_['rerolls']),
+        ('Baixaram ou compartilharam', spread), ('Enviaram o link de uma foto', brand_['links_sent']),
+        ('Buscaram pelo rosto', find['searches'])])}</div></section>"""
+
+
+def _minutes(m: int | None) -> str:
+    return "—" if m is None else f"{m} min" if m < 60 else f"{m // 60} h {m % 60:02d} min"
 
 
 def _when(iso: str | None) -> str:
@@ -238,24 +322,24 @@ def render(event: dict, numbers: dict, thumbs: dict[str, bytes]) -> str:
     day, reach, brand_, find, venue, cost = (numbers[k] for k in ("day", "reach", "brand", "find", "venue", "cost"))
     received = f" de {_n(day['received'])} recebidas" if day["received"] else ""
     rounds = [(_when(r["published"]), r["new"], r["total"],
-               f"{r['median_minutes']} min" if r["median_minutes"] is not None else "—") for r in day["rounds"]]
+               _minutes(r["median_minutes"])) for r in day["rounds"]]
     peak = reach["peak"]
     per_hour = [(dt.datetime.strptime(h, "%Y-%m-%d %H:00").strftime("%d/%m %Hh"), n) for h, n in reach["per_hour"].items()]
     found = find["by_result"]
     sections = [
-        f"""<section><h2>O dia em números</h2>
+        f"""<section><div class="keep"><h2>O dia em números</h2>
 <div class="stats">{_stat(day['published'], f'fotos publicadas{received}')}{_stat(len(day['photographers']) or None, 'fotógrafos voluntários')}
-{_stat(len(day['rounds']) or None, 'rodadas de publicação')}</div>
+{_stat(len(day['rounds']) or None, 'rodadas de publicação')}</div></div>
 {_table(('Fotógrafo', 'Fotos'), list(day['photographers'].items()), bars=1) if day['photographers'] else ''}
-<p class="lead">Rodadas: quando cada leva de fotos chegou à galeria e o tempo mediano entre a foto e a publicação.</p>
-{_table(('Publicada', 'Fotos novas', 'Total na galeria', 'Da foto à galeria'), rounds)}</section>""",
-        f"""<section><h2>Alcance</h2>
+<div class="keep"><p class="lead">Rodadas: quando cada leva de fotos chegou à galeria e o tempo mediano entre a foto e
+a publicação.</p>{_table(('Publicada', 'Fotos novas', 'Total na galeria', 'Da foto à galeria'), rounds)}</div></section>""",
+        f"""<section><div class="keep"><h2>Alcance</h2>
 <div class="stats">{_stat(reach['opens'], 'aberturas da galeria')}{_stat(f"{peak['opens']} às {peak['hour'][-5:-3]}h" if peak else '—', 'pico em uma hora')}
 {_stat(reach['photo_views'], 'fotos abertas')}{_stat(reach['photos_viewed'], 'fotos diferentes vistas')}
 {_stat(reach['link_visits'], 'visitas vindas de link de foto')}{_stat(reach['phone'], 'aberturas no celular')}
-{_stat(reach['computer'], 'aberturas no computador')}</div>
+{_stat(reach['computer'], 'aberturas no computador')}</div></div>
 {_table(('Hora', 'Aberturas'), per_hour, bars=1)}</section>""",
-        f"""<section><h2>Marca em circulação</h2>
+        f"""<section class="keep"><h2>Marca em circulação</h2>
 <p class="lead">Cada foto baixada ou compartilhada leva a moldura e a marca do evento.</p>
 <div class="stats">{_stat(brand_['saved'], 'fotos baixadas')}{_stat(brand_['shared'], 'fotos compartilhadas')}
 {_stat(brand_['fun_picks'], 'vezes na moldura Divertida')}{_stat(brand_['rerolls'], 'trocas de stickers')}
@@ -263,18 +347,18 @@ def render(event: dict, numbers: dict, thumbs: dict[str, bytes]) -> str:
 {_stat(brand_['links_pasted'], 'links colados em apps')}</div>
 {_table(('Formato', 'Baixadas e compartilhadas'), [({'feed': 'Post', 'story': 'Story'}.get(k, k or 'Original'), n) for k, n in brand_['by_format'].items()], bars=1)}
 {_table(('Moldura', 'Baixadas e compartilhadas'), list(brand_['by_frame'].items()), bars=1)}</section>""",
-        f"""<section><h2>Encontrar-se</h2>
+        f"""<section class="keep"><h2>Encontrar-se</h2>
 <div class="stats">{_stat(find['searches'], 'buscas por rosto')}{_stat(found['1-5'] + found['6+'], 'acharam fotos')}
 {_stat(find['camera'], 'com a câmera')}{_stat(find['photo'], 'com uma foto do celular')}</div>
 {_table(('Resultado', 'Buscas'), [('Nenhuma foto', found['0']), ('1 a 5 fotos', found['1-5']), ('6 fotos ou mais', found['6+']), ('Erro ou recusa', found['erro'])], bars=1)}</section>""",
-        f"""<section><h2>No local</h2>
+        f"""<section class="keep"><h2>No local</h2>
 <div class="stats">{_stat(f"{venue['wall_hours']:g} h".replace('.', ','), 'de telão no ar')}{_stat(brand_['new_photos_taps'], 'toques em "Chegaram fotos novas"')}</div></section>""",
-        f"""<section><h2>Destaques</h2>
+        f"""<section><div class="keep"><h2>Destaques</h2>
 <p class="lead">As fotos mais abertas e as mais espalhadas (baixadas, compartilhadas ou com link enviado). Fotos com
 menores de idade ficam de fora.</p>
-<h3>Mais abertas</h3>{_photos(numbers['highlights']['opened'], thumbs, ('abertura', 'aberturas'))}
-<h3>Mais espalhadas</h3>{_photos(numbers['highlights']['spread'], thumbs, ('vez', 'vezes'))}</section>""",
-        f"""<section><h2>Custo e limites</h2>
+<h3>Mais abertas</h3>{_photos(numbers['highlights']['opened'], thumbs, ('abertura', 'aberturas'))}</div>
+<div class="keep"><h3>Mais espalhadas</h3>{_photos(numbers['highlights']['spread'], thumbs, ('vez', 'vezes'))}</div></section>""",
+        f"""<section class="keep"><h2>Custo e limites</h2>
 <div class="stats">{_stat(f"{cost['gb_served']:g} GB".replace('.', ','), 'servidos pela galeria')}{_stat(cost['requests'], 'pedidos registrados')}</div>
 <ul class="notes"><li>São contagens de ações, não de pessoas: a galeria não guarda identificador de quem visita, e o
 registro não tem IP.</li><li>Salvar a foto tocando e segurando a imagem não gera registro; um compartilhamento cancelado
@@ -289,7 +373,7 @@ gerar mais de uma prévia, e um link já colado antes pode não gerar nenhuma.</
 <style>{brand.font_face(art['font'])}{brand.TOKENS}{CSS}</style>
 <header><img src="{art['logo']}" alt="{escape(brand.LOGO_ALT)}"><h1>Relatório da galeria de fotos</h1>
 <p>{escape(event['name'])} · registros de {escape(period)}</p></header>
-<main>{''.join(sections)}</main></html>"""
+<main>{_cover(day, reach, brand_, find)}{''.join(sections)}</main></html>"""
 
 
 # --- fetching ----------------------------------------------------------------------------------------------------

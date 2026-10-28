@@ -96,7 +96,7 @@ def test_the_report_has_its_seven_sections_and_nothing_external(tmp_path):
     assert headings == ["O dia em números", "Alcance", "Marca em circulação", "Encontrar-se", "No local",
                         "Destaques", "Custo e limites"]
     assert not re.search(r"""(src|href)=["']?https?:""", html) and "data:image/webp;base64," in html
-    assert "1 abertura<" not in html and "2 aberturas<" in html
+    assert "1 aberturas" not in html and "2 aberturas<" in html and "<svg" in html
 
 
 def test_an_empty_log_still_gives_a_report(tmp_path):
