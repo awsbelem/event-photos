@@ -67,6 +67,13 @@ notebook ("Tela cheia"; `wall.html?s=12` shows each photo 12 s instead of 8). It
 inside the event's artwork, with its time, moment and photographer, and a QR code to the gallery (the stack's
 address, or `short_url`). It reads `photos.json` every minute and shows new photos first, marked "Nova".
 
+**Link previews.** A pasted gallery link shows the event's name, date and place (no photo count: the apps keep a preview for days) and `og.jpg` (the logo beside the
+best photo of each part of the day). In the viewer, "Enviar link da foto" sends `p/<id>.html`: a page whose preview
+is that photo (`og/<id>.jpg`) and which takes the visitor straight to it in the gallery. Preview images need the
+public address, so they appear only when the gallery is built for an `aws_stack`. `robots.txt` lets the preview
+crawlers in (LinkedIn honors it) and keeps everyone else out; the pages stay noindex. WhatsApp keeps its own copy
+of a preview, so a link pasted before a publish keeps the old one.
+
 ## AWS
 
 ### Gallery and upload page

@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 from .gallery import ASSET_FOLDERS, BEACON, ICONS, PHOTO_LIST
+from .preview import HOME_CARD, PAGE_DIR
 from .wall import WALL
 
 AWS_PROFILE = "event-photos"  # `aws configure --profile event-photos` with the stack's publisher key
@@ -39,9 +40,13 @@ def aws_commands(site: Path, bucket: str, distribution: str, profile: str = AWS_
             for folder in ASSET_FOLDERS if (site / folder).is_dir()]
     if (site / BEACON).is_file():  # the counts' GIF never changes; the edge answers it and the log still records it
         cmds.append([*aws, "s3", "cp", str(site / BEACON), f"s3://{bucket}/{BEACON}", "--cache-control", IMMUTABLE])
-    # The icons keep their names across redesigns, so browsers check them like the pages.
+    # The icons and the preview card keep their names across builds, so browsers check them like the pages.
     cmds += [[*aws, "s3", "cp", str(site / name), f"s3://{bucket}/{name}", "--cache-control", REVALIDATE]
-             for name in ICONS if (site / name).is_file()]
+             for name in (*ICONS, HOME_CARD) if (site / name).is_file()]
+    # One small page per photo for link previews; checked like the pages, since its text follows the schedule.
+    if (site / PAGE_DIR).is_dir():
+        cmds.append([*aws, "s3", "sync", str(site / PAGE_DIR), f"s3://{bucket}/{PAGE_DIR}",
+                     "--cache-control", REVALIDATE])
     cmds += [[*aws, "s3", "cp", str(site / page), f"s3://{bucket}/{page}", "--cache-control", REVALIDATE]
              for page in PAGES]
     # --size-only: everything was just uploaded, so this pass only deletes leftovers

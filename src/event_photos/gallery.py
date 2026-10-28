@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import hashlib
 import io
 import json
 import shutil
@@ -19,11 +20,11 @@ from pathlib import Path
 
 from PIL import Image
 
-from . import brand, wall
+from . import brand, preview, wall
 from .frames import FRAMES_DIR
 
 FRAME_FORMATS = ("feed", "story")
-ASSET_FOLDERS = ("thumbs", "view", "photos", *FRAME_FORMATS)  # never change once published
+ASSET_FOLDERS = ("thumbs", "view", "photos", *FRAME_FORMATS, preview.CARD_DIR)  # never change once published
 THUMB_LONG_SIDE = 640
 VIEW_LONG_SIDE = 1800
 OTHER_MOMENT = "Outros momentos"
@@ -36,6 +37,9 @@ BEACON_GIF = (b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\
               b",\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;")
 PHOTO_LIST = "photos.json"  # the page's list, published beside it so an open page can see new photos
 ICONS = ("favicon.ico", "apple-touch-icon.png")  # at the root, where browsers also look for them unasked
+# Search engines stay out; the apps that draw a link's preview are let in (LinkedIn's honors robots.txt).
+ROBOTS = ("User-agent: LinkedInBot\nUser-agent: facebookexternalhit\nUser-agent: Twitterbot\nUser-agent: Slackbot\n"
+          "Allow: /\n\nUser-agent: *\nDisallow: /\n")
 MONTHS = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto",
           "setembro", "outubro", "novembro", "dezembro"]
 
@@ -56,6 +60,8 @@ class GalleryPhoto:
     moment: str = OTHER_MOMENT
     frames: tuple[str, ...] = ()
     by: str = ""  # photographer's name, when the event has several
+    score: float = 0.0  # the selection's quality score
+    focus: tuple[float, float] = (.5, .5)  # middle of the faces, where a crop should center
 
 
 LOCAL_SUFFIX = ".local.json"  # event.local.json: gitignored values (removal contact, face_search on/off)
@@ -117,6 +123,7 @@ def _render_sizes(photo: GalleryPhoto, site: Path, designs: list[str]) -> Galler
             copy.thumbnail((long_side, long_side), Image.LANCZOS)
             copy.save(site / folder / f"{photo.id}.webp", "WEBP", quality=quality, method=5)
     shutil.copyfile(photo.source, site / "photos" / f"{photo.id}.jpg")
+    preview.save(preview.photo_card(photo.source), site / preview.CARD_DIR / f"{photo.id}.jpg")
     frames = []
     for fmt in FRAME_FORMATS:  # already 1080 px wide: served as is, for viewing and download
         made = [d for d in designs if (photo.source.parent.parent / "frames" / fmt / d / photo.source.name).exists()]
@@ -150,7 +157,8 @@ def build_gallery(run_dir: Path, site: Path, event: dict, clock_offset: dt.timed
                  if r["capture_time"] else None)
         photos.append(GalleryPhoto(pid, run_dir / "selected" / r["output"], taken,
                                    moment=moment_for(taken, event["moments"]),
-                                   by=names.get(owner, "") if len(names) > 1 else ""))
+                                   by=names.get(owner, "") if len(names) > 1 else "", score=r.get("score", 0.0),
+                                   focus=preview.faces_center((r.get("analysis") or {}).get("faces", []))))
     with ThreadPoolExecutor(workers) as pool:
         photos = list(pool.map(lambda p: _render_sizes(p, site, [d["key"] for d in designs]), photos))
     photos.sort(key=lambda p: (p.taken or dt.datetime.max, p.id))
@@ -158,12 +166,15 @@ def build_gallery(run_dir: Path, site: Path, event: dict, clock_offset: dt.timed
         print(f"aviso: {len(photos)} fotos sem \"schedule\" no evento — a galeria fica numa rolagem só, "
               "sem atalhos por momento")
 
-    (site / "index.html").write_text(_page(event, photos, designs), encoding="utf-8")
+    preview.save(preview.home_card([(p.source, p.focus) for p in _showcase(photos)]), site / preview.HOME_CARD)
+    _photo_pages(site, event, photos)
+    card = (site / preview.HOME_CARD).read_bytes()
+    (site / "index.html").write_text(_page(event, photos, designs, card), encoding="utf-8")
     _, _, data, moments = _listing(event, photos)
     listed = {"at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), "moments": moments, "photos": data}
     (site / PHOTO_LIST).write_text(json.dumps(listed, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     (site / wall.WALL).write_text(wall.page(event, PHOTO_LIST, BEACON, ICONS), encoding="utf-8")
-    (site / "robots.txt").write_text("User-agent: *\nDisallow: /\n")
+    (site / "robots.txt").write_text(ROBOTS)
     (site / BEACON).write_bytes(BEACON_GIF)
     brand.icon(32, rounded=True).save(site / ICONS[0], sizes=[(16, 16), (32, 32)])
     brand.icon(180, rounded=False).save(site / ICONS[1])
@@ -174,6 +185,39 @@ def build_gallery(run_dir: Path, site: Path, event: dict, clock_offset: dt.timed
                                    + "".join(f"/{folder}/*\n  Cache-Control: public, max-age=31536000, immutable\n"
                                              for folder in ASSET_FOLDERS))
     return site / "index.html"
+
+
+def _showcase(photos: list[GalleryPhoto], n: int = 3) -> list[GalleryPhoto]:
+    """The link preview's photos: the best-scored one from each part of the day, landscape and with people."""
+    pool = [p for p in photos if p.width > p.height and p.focus != (.5, .5)] or photos
+    pool = sorted(pool, key=lambda p: (p.taken or dt.datetime.max, p.id))
+    parts = [pool[i * len(pool) // n:(i + 1) * len(pool) // n] for i in range(n)]
+    best = [max(part, key=lambda p: p.score) for part in parts if part]
+    return sorted(best, key=lambda p: -p.score)  # the best one takes the large slot
+
+
+def _base_url(event: dict) -> str:
+    return (event.get("url") or "").rstrip("/")
+
+
+def _photo_pages(site: Path, event: dict, photos: list[GalleryPhoto]) -> None:
+    (site / preview.PAGE_DIR).mkdir(exist_ok=True)
+    for p in photos:  # no "photo 3 of 41" either: the count would go stale in the apps' caches
+        facts = [x for x in (p.moment if p.moment != OTHER_MOMENT else "", p.taken.strftime("%H:%M") if p.taken else "",
+                             f"Foto: {p.by}" if p.by else "") if x]
+        page = preview.photo_page(p.id, f"Foto — {event['name']}", " · ".join(facts) or _date_pt(event["date"]),
+                                  " · ".join(["Foto do evento", *facts]), _base_url(event))
+        (site / preview.photo_url(p.id)).write_text(page, encoding="utf-8")
+
+
+def _home_tags(event: dict, photos: list[GalleryPhoto], site_card: bytes) -> str:
+    base = _base_url(event)
+    version = hashlib.sha256(site_card).hexdigest()[:10]  # a new card gets a new address, past the apps' caches
+    # No photo count: the apps keep a preview for days, and a link shared at 9 a.m. would show the 9 a.m. count.
+    facts = [_date_pt(event["date"]), event.get("place", "")]
+    return preview.tags(f"{base}/" if base else "", event["name"], " · ".join(x for x in facts if x),
+                        f"{base}/{preview.HOME_CARD}?v={version}" if base else "",
+                        "Logo do evento e fotos do dia")
 
 
 def _date_pt(iso: str) -> str:
@@ -674,7 +718,7 @@ def _listing(event: dict, photos: list[GalleryPhoto]) -> tuple[dict[str, list], 
     return groups, starts, data, moments
 
 
-def _page(event: dict, photos: list[GalleryPhoto], designs: list[dict]) -> str:
+def _page(event: dict, photos: list[GalleryPhoto], designs: list[dict], card: bytes = b"") -> str:
     groups, starts, data, moments = _listing(event, photos)
     art = brand.assets()
 
@@ -707,6 +751,7 @@ def _page(event: dict, photos: list[GalleryPhoto], designs: list[dict]) -> str:
 <meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="{brand.NAVY}">
 <link rel="icon" href="{ICONS[0]}" sizes="16x16 32x32"><link rel="apple-touch-icon" href="{ICONS[1]}">
 <title>Fotos — {escape(event['name'])}</title>
+{_home_tags(event, photos, card)}
 <style>
 {brand.font_face(art["font"])}
 {brand.TOKENS}{PAGE_CSS}{FINDER_CSS if find_button else ""}
@@ -735,6 +780,7 @@ def _page(event: dict, photos: list[GalleryPhoto], designs: list[dict]) -> str:
     {_modes(designs)}
     {_formats(designs)}
     <div class="actions"><button class="btn primary share" hidden>Salvar ou postar</button><a class="btn download" download>Baixar arquivo</a></div>
+    <p class="tag"><button class="copy-tag send-link">Enviar link da foto</button></p>
     {tag}
   </div>
 </div>
@@ -825,9 +871,16 @@ if(navigator.canShare&&navigator.canShare({{files:[probe]}})){{share.hidden=fals
   catch(e){{if(e.name!=="AbortError")say("Não deu para abrir o compartilhamento. Tente “Baixar arquivo”.");}}
   finally{{busy=false;share.disabled=false;share.textContent="Salvar ou postar";}}}};}}
 else{{dl.classList.add("primary");dl.textContent="Baixar foto";}}
-const copyTag=document.querySelector(".copy-tag");
+const copyTag=document.querySelector(".copy-tag[data-tag]");
 if(copyTag)copyTag.onclick=async()=>{{hit("tag");try{{await navigator.clipboard.writeText(copyTag.dataset.tag);
   say(copyTag.dataset.tag+" copiado. Cole na legenda ao postar.");}}catch(e){{say("Marque "+copyTag.dataset.tag+" ao postar.");}}}};
+/* The photo's own page, so the chat shows this photo in the link's preview; the share sheet where there is one. */
+const sendLink=document.querySelector(".send-link");
+sendLink.onclick=async()=>{{const p=VIEW[index],url=new URL("{preview.PAGE_DIR}/"+encodeURIComponent(p.id)+".html",location.href).href;
+  if(navigator.share){{try{{await navigator.share({{url}});hit("link",{{id:p.id}});return;}}
+    catch(e){{if(e.name==="AbortError")return;}}}}
+  try{{await navigator.clipboard.writeText(url);hit("link",{{id:p.id}});say("Link da foto copiado. Cole na conversa.");}}
+  catch(e){{say(url);}}}};
 toTop.onclick=()=>scrollTo({{top:0}});
 addEventListener("scroll",()=>toTop.classList.toggle("show",scrollY>innerHeight*1.5),{{passive:true}});
 const m=location.hash.match(/^#foto=(.+)$/);
