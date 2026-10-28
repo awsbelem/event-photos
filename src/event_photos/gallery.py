@@ -505,11 +505,13 @@ footer ol{margin:8px 0 0;padding-left:20px;line-height:1.7}
   cursor:pointer;box-shadow:0 8px 24px #0009;opacity:0;transform:translateY(12px);pointer-events:none;
   transition:opacity .25s,transform .35s cubic-bezier(.16,1,.3,1)}
 .to-top.show{opacity:1;transform:none;pointer-events:auto}
-/* "N fotos novas · Ver": floats like the to-top button, centered so the two never meet; out of reach until shown. */
-.fresh{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));z-index:6;flex:none;width:max-content;
-  max-width:calc(100% - 152px);box-shadow:0 8px 24px #0009;opacity:0;visibility:hidden;transform:translate(-50%,12px);
-  transition:opacity .25s,transform .35s cubic-bezier(.16,1,.3,1),visibility 0s .35s}
-.fresh.show{opacity:1;visibility:visible;transform:translate(-50%,0);transition-delay:0s}
+/* "Chegaram N fotos · Mostrar": floats like the to-top button, on the other side, so the text has the width it needs
+   in one line; out of reach until shown. */
+.fresh{position:fixed;left:16px;bottom:calc(16px + env(safe-area-inset-bottom));z-index:6;flex:none;width:max-content;
+  max-width:calc(100% - 92px);white-space:nowrap;box-shadow:0 8px 24px #0009;opacity:0;visibility:hidden;
+  transform:translateY(12px);transition:opacity .25s,transform .35s cubic-bezier(.16,1,.3,1),visibility 0s .35s}
+@media(max-width:359px){.fresh{font-size:14px;padding:0 12px}}
+.fresh.show{opacity:1;visibility:visible;transform:none;transition-delay:0s}
 .viewer{position:fixed;inset:0;z-index:20;background:var(--deep);display:none;flex-direction:column}
 .viewer.open{display:flex}
 .top{display:flex;align-items:center;gap:12px;padding:calc(8px + env(safe-area-inset-top)) 8px 8px 16px}
@@ -572,34 +574,35 @@ footer ol{margin:8px 0 0;padding-left:20px;line-height:1.7}
 """.replace("FONT", brand.FONT_STACK)
 
 # The sticky bar names the moment on screen and lights every node already reached: the day fills in as it is scrolled.
-# The photos the "fotos novas" button brought in (FRESH_JS below), read before the first tiles are built.
-NEW_JS = r"""
-const NEW=(()=>{const m=location.hash.match(/^#novas=(.+)$/);if(!m)return new Set();
-  history.replaceState(null,"",location.pathname);return new Set(decodeURIComponent(m[1]).split(","));})();
-"""
+# The photos the "Chegaram N fotos" button brought in (FRESH_JS below); tiles built from them are marked "Nova".
+NEW_JS = "const NEW=new Set();"
 
 FRESH_JS = r"""
 /* New photos while the page is open: the list beside the page is checked every minute while the page is on screen
-   (each failure doubles the wait, up to 10 min); new photos bring up a button that reloads the page at the first of
-   them, marked "Nova" for a few seconds. */
-(()=>{const known=new Set(PHOTOS.map(p=>p.id)),btn=document.querySelector(".fresh");let wait=60000,timer=0,fresh=[];
+   (each failure doubles the wait, up to 10 min). The button brings the new photos into this page, without a reload
+   (a phone's browser restores the old scroll after one, over ours), goes to the first and marks them "Nova". */
+(()=>{const known=new Set(PHOTOS.map(p=>p.id)),btn=document.querySelector(".fresh");let wait=60000,timer=0,latest=null,fresh=[];
 function later(){clearTimeout(timer);if(document.visibilityState==="visible")timer=setTimeout(check,wait);}
 async function check(){
   try{const r=await fetch("PHOTO_LIST",{cache:"no-cache"});if(!r.ok)throw new Error(r.status);
-    fresh=(await r.json()).photos.filter(p=>!known.has(p.id)).map(p=>p.id);wait=60000;const n=fresh.length;
-    if(n){btn.textContent=n+(n===1?" foto nova":" fotos novas")+" · Ver";btn.classList.add("show");}}
+    latest=await r.json();fresh=latest.photos.filter(p=>!known.has(p.id)).map(p=>p.id);wait=60000;const n=fresh.length;
+    if(n){btn.textContent=(n===1?"Chegou 1 foto":"Chegaram "+n+" fotos")+" · Mostrar";btn.classList.add("show");}}
   catch(e){wait=Math.min(wait*2,600000);}
   later();}
-/* The reload carries the new ids in the address (NEW reads them back), and the page then goes to the first of them. */
-btn.onclick=()=>{hit("new");history.scrollRestoration="manual";
-  history.replaceState(null,"",location.pathname+"#novas="+encodeURIComponent(fresh.slice(0,60).join(",")));location.reload();};
-const first=NEW.size&&PHOTOS.find(p=>NEW.has(p.id));
-if(first){const s=SECTIONS[first.m],k=s.items.indexOf(first),cs=getComputedStyle(s.grid),
+function goTo(p){const s=SECTIONS[p.m],k=s.items.indexOf(p),cs=getComputedStyle(s.grid),
     cols=cs.gridTemplateColumns.split(" ").length||1,row=(parseFloat(cs.gridTemplateColumns)||0)+(parseFloat(cs.rowGap)||0);
   scrollTo(0,s.grid.getBoundingClientRect().top+scrollY+Math.floor(k/cols)*row-innerHeight/3);
-  let tries=0;const go=()=>{const t=s.grid.querySelector('[data-id="'+CSS.escape(first.id)+'"]');
+  let tries=0;const go=()=>{const t=s.grid.querySelector('[data-id="'+CSS.escape(p.id)+'"]');
     if(t)t.scrollIntoView({block:"center"});else if(tries++<30){tick();requestAnimationFrame(go);}};
   requestAnimationFrame(go);}
+btn.onclick=()=>{if(!latest||!fresh.length)return;hit("new");btn.classList.remove("show");
+  const same=latest.moments.length===MOMENTS.length&&latest.moments.every((m,i)=>m.n===MOMENTS[i].n);
+  if(!same){location.reload();return;}  /* the schedule itself changed: the sections need the new page */
+  fresh.forEach(id=>{NEW.add(id);known.add(id);});fresh=[];
+  PHOTOS.splice(0,PHOTOS.length,...latest.photos);VIEW=PHOTOS;
+  const found=document.querySelector(".found");if(found)found.hidden=true;  /* a selfie search result ends here */
+  const total=document.querySelector(".intro .sub b");if(total)total.textContent=PHOTOS.length+(PHOTOS.length===1?" foto":" fotos");
+  layout(PHOTOS);const first=PHOTOS.find(p=>NEW.has(p.id));if(first)goTo(first);};
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")check();else clearTimeout(timer);});
 later();})();
 """.replace("PHOTO_LIST", PHOTO_LIST)

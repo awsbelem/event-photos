@@ -31,11 +31,13 @@ def test_an_open_gallery_checks_for_new_photos_only_while_it_is_on_screen(tmp_pa
     html = build_gallery(run_dir(tmp_path), tmp_path / "site", dict(EVENT)).read_text()
     assert f'fetch("{PHOTO_LIST}",{{cache:"no-cache"}})' in html and "visibilitychange" in html
     assert 'class="btn primary fresh"' in html and 'aria-live="polite"' in html.split('class="btn primary fresh"')[0][-200:]
-    assert "fotos novas" in html and 'hit("new")' in html and "location.reload()" in html
+    assert "Chegou " in html and "Chegaram " in html and " · Mostrar" in html and 'hit("new")' in html and "location.reload()" in html
 
 
-def test_the_reload_goes_to_the_first_new_photo_and_marks_the_new_ones(tmp_path):
+def test_the_button_brings_the_new_photos_in_place_and_goes_to_the_first(tmp_path):
     html = build_gallery(run_dir(tmp_path), tmp_path / "site", dict(EVENT)).read_text()
-    assert '"#novas="' in html and "/^#novas=(.+)$/" in html  # the new ids ride in the address across the reload
+    # no reload: a reload lets the phone's browser put the scroll back where it was, over ours
+    assert "PHOTOS.splice(0,PHOTOS.length,...latest.photos)" in html and "layout(PHOTOS)" in html
     assert "NEW.has(p.id)" in html and 'content:"Nova"' in html  # tiles built later are marked too
-    assert 'history.scrollRestoration="manual"' in html and "#volta=" not in html
+    assert "#novas=" not in html and "scrollRestoration" not in html
+    assert "location.reload()" in html  # only when the schedule itself changed between publishes
