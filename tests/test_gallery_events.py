@@ -48,3 +48,13 @@ def test_face_search_counts_only_the_size_of_the_result(tmp_path):
 def test_the_footer_says_what_is_counted(tmp_path):
     _, html = gallery(tmp_path)
     assert "sem identificar ninguém" in html.split("<footer>")[1]
+
+
+def test_the_site_has_the_event_icon_for_the_tab_and_the_home_screen(tmp_path):
+    site, html = gallery(tmp_path)
+    with Image.open(site / "favicon.ico") as ico:
+        assert ico.format == "ICO" and {(16, 16), (32, 32)} <= set(ico.info["sizes"])
+    with Image.open(site / "apple-touch-icon.png") as touch:
+        assert touch.size == (180, 180) and touch.mode == "RGB"  # iOS rounds it; a transparent corner turns black
+    head = html.split("</head>")[0]
+    assert '<link rel="icon" href="favicon.ico"' in head and '<link rel="apple-touch-icon" href="apple-touch-icon.png">' in head

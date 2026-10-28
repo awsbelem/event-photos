@@ -34,6 +34,8 @@ SCHEDULE_ADVISED_ABOVE = 60  # photos; past this, one long scroll is hard to sea
 BEACON = "e.gif"
 BEACON_GIF = (b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00"
               b",\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;")
+PHOTO_LIST = "photos.json"  # the page's list, published beside it so an open page can see new photos
+ICONS = ("favicon.ico", "apple-touch-icon.png")  # at the root, where browsers also look for them unasked
 MONTHS = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto",
           "setembro", "outubro", "novembro", "dezembro"]
 
@@ -157,8 +159,13 @@ def build_gallery(run_dir: Path, site: Path, event: dict, clock_offset: dt.timed
               "sem atalhos por momento")
 
     (site / "index.html").write_text(_page(event, photos, designs), encoding="utf-8")
+    _, _, data, moments = _listing(event, photos)
+    listed = {"at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), "moments": moments, "photos": data}
+    (site / PHOTO_LIST).write_text(json.dumps(listed, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     (site / "robots.txt").write_text("User-agent: *\nDisallow: /\n")
     (site / BEACON).write_bytes(BEACON_GIF)
+    brand.icon(32, rounded=True).save(site / ICONS[0], sizes=[(16, 16), (32, 32)])
+    brand.icon(180, rounded=False).save(site / ICONS[1])
     # Cloudflare Pages headers (CloudFront sets the same ones in infra/aws-gallery.yaml):
     # keep the gallery out of search engines and out of other sites' frames; photos never change.
     (site / "_headers").write_text("/*\n  X-Robots-Tag: noindex, nofollow\n  Referrer-Policy: no-referrer\n"
@@ -493,6 +500,11 @@ footer ol{margin:8px 0 0;padding-left:20px;line-height:1.7}
   cursor:pointer;box-shadow:0 8px 24px #0009;opacity:0;transform:translateY(12px);pointer-events:none;
   transition:opacity .25s,transform .35s cubic-bezier(.16,1,.3,1)}
 .to-top.show{opacity:1;transform:none;pointer-events:auto}
+/* "N fotos novas · Ver": floats like the to-top button, centered so the two never meet; out of reach until shown. */
+.fresh{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));z-index:6;flex:none;width:max-content;
+  max-width:calc(100% - 152px);box-shadow:0 8px 24px #0009;opacity:0;visibility:hidden;transform:translate(-50%,12px);
+  transition:opacity .25s,transform .35s cubic-bezier(.16,1,.3,1),visibility 0s .35s}
+.fresh.show{opacity:1;visibility:visible;transform:translate(-50%,0);transition-delay:0s}
 .viewer{position:fixed;inset:0;z-index:20;background:var(--deep);display:none;flex-direction:column}
 .viewer.open{display:flex}
 .top{display:flex;align-items:center;gap:12px;padding:calc(8px + env(safe-area-inset-top)) 8px 8px 16px}
@@ -555,6 +567,29 @@ footer ol{margin:8px 0 0;padding-left:20px;line-height:1.7}
 """.replace("FONT", brand.FONT_STACK)
 
 # The sticky bar names the moment on screen and lights every node already reached: the day fills in as it is scrolled.
+FRESH_JS = r"""
+/* New photos while the page is open: the list beside the page is checked every minute while the page is on screen
+   (each failure doubles the wait, up to 10 min); new photos bring up a button that reloads the page where it is. */
+(()=>{const known=new Set(PHOTOS.map(p=>p.id)),btn=document.querySelector(".fresh");let wait=60000,timer=0;
+function later(){clearTimeout(timer);if(document.visibilityState==="visible")timer=setTimeout(check,wait);}
+async function check(){
+  try{const r=await fetch("PHOTO_LIST",{cache:"no-cache"});if(!r.ok)throw new Error(r.status);
+    const n=(await r.json()).photos.filter(p=>!known.has(p.id)).length;wait=60000;
+    if(n){btn.textContent=n+(n===1?" foto nova":" fotos novas")+" · Ver";btn.classList.add("show");}}
+  catch(e){wait=Math.min(wait*2,600000);}
+  later();}
+/* The reload keeps the visitor's place: the moment on screen and how far into it, in the address, read back below
+   once the sections have their heights again (tiles are built as the page scrolls, so the browser cannot). */
+btn.onclick=()=>{hit("new");const s=[...document.querySelectorAll("main section")].find(el=>el.getBoundingClientRect().bottom>80);
+  if(s)history.replaceState(null,"",location.pathname+"#volta="+s.id+"."+Math.round(-s.getBoundingClientRect().top));
+  history.scrollRestoration="manual";location.reload();};
+const back=location.hash.match(/^#volta=([\w-]+)\.(-?\d+)$/);
+if(back){history.replaceState(null,"",location.pathname);const el=document.getElementById(back[1]);
+  if(el)scrollTo(0,el.getBoundingClientRect().top+scrollY+Number(back[2]));queue();}
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")check();else clearTimeout(timer);});
+later();})();
+""".replace("PHOTO_LIST", PHOTO_LIST)
+
 NOW_JS = """
 const nowBox=document.querySelector(".now");
 if(nowBox){const sum=nowBox.querySelector("details"),nowT=nowBox.querySelector(".t"),nowN=nowBox.querySelector(".nm"),
@@ -605,22 +640,27 @@ def _now_bar(groups: dict[str, list], starts: dict[str, str]) -> str:
             f'<div class="sched"><ol>{items}</ol></div></details></nav>')
 
 
-def _page(event: dict, photos: list[GalleryPhoto], designs: list[dict]) -> str:
+def _listing(event: dict, photos: list[GalleryPhoto]) -> tuple[dict[str, list], dict[str, str], list, list]:
+    """Sections in schedule order, their start times, and the photo and moment lists the page's script reads."""
     order = [m.title for m in event["moments"]] + [OTHER_MOMENT]
     groups = {title: [p for p in photos if p.moment == title] for title in order}
     groups = {k: v for k, v in groups.items() if v or k != OTHER_MOMENT}  # the whole schedule, with or without photos
     starts = {m.title: m.start.strftime("%H:%M") for m in event["moments"]}
     alts = {p.id: _alt(p, i, len(photos)) for i, p in enumerate(photos, 1)}
-    art = brand.assets()
-
-    single = len(groups) == 1 and not event["moments"]
-    sections = [_section(t, starts.get(t, ""), len(ps), single) for t, ps in groups.items()]
-
     # Tiles are built by TILES_JS from this list ("m" = section), so the page stays small with thousands of photos.
     section_of = {title: i for i, title in enumerate(groups)}
     data = [{"id": p.id, "m": section_of[p.moment], "w": p.width, "h": p.height, "f": list(p.frames),
              "v": p.height > p.width, "a": alts[p.id], "c": p.by} for p in photos]
     moments = [{"t": starts.get(t, ""), "n": t} for t in groups]
+    return groups, starts, data, moments
+
+
+def _page(event: dict, photos: list[GalleryPhoto], designs: list[dict]) -> str:
+    groups, starts, data, moments = _listing(event, photos)
+    art = brand.assets()
+
+    single = len(groups) == 1 and not event["moments"]
+    sections = [_section(t, starts.get(t, ""), len(ps), single) for t, ps in groups.items()]
     nav = "" if single else _now_bar(groups, starts)
     authors = sorted({p.by for p in photos if p.by}) or ([event["photographer"]] if event.get("photographer") else [])
     credit = f"Fotos: {escape(', '.join(authors))}. " if authors else ""
@@ -646,6 +686,7 @@ def _page(event: dict, photos: list[GalleryPhoto], designs: list[dict]) -> str:
 <html lang="pt-BR"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="{brand.NAVY}">
+<link rel="icon" href="{ICONS[0]}" sizes="16x16 32x32"><link rel="apple-touch-icon" href="{ICONS[1]}">
 <title>Fotos — {escape(event['name'])}</title>
 <style>
 {brand.font_face(art["font"])}
@@ -664,6 +705,7 @@ def _page(event: dict, photos: list[GalleryPhoto], designs: list[dict]) -> str:
 <p>{removal}</p>
 <p>Contamos aberturas e compartilhamentos para o relatório do evento, sem identificar ninguém.</p>{notice}{credits}<img class="skyline" src="{art["skyline"]}" alt="" width="1080" height="250"></footer>
 <button class="to-top" aria-label="Voltar ao topo">{_icon("up")}</button>
+<div class="fresh-live" aria-live="polite"><button class="btn primary fresh"></button></div>
 <div class="viewer" role="dialog" aria-modal="true" aria-label="Foto ampliada">
   <div class="top"><div class="where"><span class="vm"></span><span class="count" aria-live="polite"></span></div>
     <button class="icon-btn close" aria-label="Fechar">{_icon("close")}</button></div>
@@ -687,7 +729,7 @@ const viewer=document.querySelector(".viewer"),stage=viewer.querySelector(".stag
   dl=viewer.querySelector(".download"),share=viewer.querySelector(".share"),modesBox=viewer.querySelector(".modes"),
   formatsBox=viewer.querySelector(".formats"),
   toast=document.querySelector(".toast"),toTop=document.querySelector(".to-top"),
-  behind=[...document.querySelectorAll("header,nav,main,footer,.to-top,.found")];
+  behind=[...document.querySelectorAll("header,nav,main,footer,.to-top,.found,.fresh-live")];
 const modes=[...modesBox.querySelectorAll("button")],formats=formatsBox?[...formatsBox.querySelectorAll("button")]:[];
 let index=-1,lastFocus=null,mode=modes[0].dataset.mode,format=null,busy=false,toastTimer=0,seen=null;
 /* One count per action for the event report; nothing in it identifies the visitor, and a lost count is fine. */
@@ -735,6 +777,7 @@ addEventListener("popstate",()=>{{const m=location.hash.match(/^#foto=(.+)$/);
   else if(!m&&viewer.classList.contains("open"))hide();}});
 {TILES_JS}
 {NOW_JS}
+{FRESH_JS}
 document.querySelector("main").addEventListener("click",e=>{{const t=e.target.closest(".tile");
   if(t){{e.preventDefault();open(t.dataset.id,true);}}}});
 viewer.querySelector(".prev").onclick=()=>show(index-1);viewer.querySelector(".next").onclick=()=>show(index+1);

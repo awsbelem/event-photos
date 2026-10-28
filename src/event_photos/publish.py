@@ -5,12 +5,12 @@ import json
 import subprocess
 from pathlib import Path
 
-from .gallery import ASSET_FOLDERS, BEACON
+from .gallery import ASSET_FOLDERS, BEACON, ICONS, PHOTO_LIST
 
 AWS_PROFILE = "event-photos"  # `aws configure --profile event-photos` with the stack's publisher key
 IMMUTABLE = "public, max-age=31536000, immutable"
 REVALIDATE = "no-cache"  # pages: browsers and CloudFront check for a new version on every visit
-PAGES = ("robots.txt", "index.html")  # index.html last, once every photo it points to is up
+PAGES = ("robots.txt", PHOTO_LIST, "index.html")  # index.html last, once every photo it points to is up
 
 
 def cloudflare_pages(site: Path, project: str) -> None:
@@ -38,6 +38,9 @@ def aws_commands(site: Path, bucket: str, distribution: str, profile: str = AWS_
             for folder in ASSET_FOLDERS if (site / folder).is_dir()]
     if (site / BEACON).is_file():  # the counts' GIF never changes; the edge answers it and the log still records it
         cmds.append([*aws, "s3", "cp", str(site / BEACON), f"s3://{bucket}/{BEACON}", "--cache-control", IMMUTABLE])
+    # The icons keep their names across redesigns, so browsers check them like the pages.
+    cmds += [[*aws, "s3", "cp", str(site / name), f"s3://{bucket}/{name}", "--cache-control", REVALIDATE]
+             for name in ICONS if (site / name).is_file()]
     cmds += [[*aws, "s3", "cp", str(site / page), f"s3://{bucket}/{page}", "--cache-control", REVALIDATE]
              for page in PAGES]
     # --size-only: everything was just uploaded, so this pass only deletes leftovers

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from event_photos.gallery import BEACON
+from event_photos.gallery import BEACON, ICONS, PHOTO_LIST
 from event_photos.publish import IMMUTABLE, REVALIDATE, aws_commands
 
 
@@ -25,6 +25,22 @@ def test_the_counting_gif_goes_up_cached_before_the_page_that_requests_it(tmp_pa
     beacon = next(i for i, c in enumerate(cmds) if f"s3://b/{BEACON} --cache-control {IMMUTABLE}" in c)
     index = next(i for i, c in enumerate(cmds) if "s3://b/index.html" in c)
     assert beacon < index
+
+
+def test_the_icons_go_up_before_the_page_that_links_them(tmp_path):
+    for name in ICONS:
+        (tmp_path / name).write_bytes(b"x")
+    cmds = [" ".join(c) for c in aws_commands(site(tmp_path), "b", "D1")]
+    index = next(i for i, c in enumerate(cmds) if "s3://b/index.html" in c)
+    assert all(any(f"s3://b/{name}" in c for c in cmds[:index]) for name in ICONS)
+
+
+def test_the_photo_list_is_checked_on_every_visit_and_goes_up_after_the_photos(tmp_path):
+    cmds = [" ".join(c) for c in aws_commands(site(tmp_path), "b", "D1")]
+    listed = next(i for i, c in enumerate(cmds) if c.endswith(f"s3://b/{PHOTO_LIST} --cache-control {REVALIDATE}"))
+    photos = max(i for i, c in enumerate(cmds) if "s3 sync" in c and IMMUTABLE in c)
+    index = next(i for i, c in enumerate(cmds) if "s3://b/index.html" in c)
+    assert photos < listed < index
 
 
 def test_leftovers_are_deleted_only_after_the_new_page_is_live(tmp_path):
