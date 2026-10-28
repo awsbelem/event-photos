@@ -34,7 +34,8 @@ def test_an_open_gallery_checks_for_new_photos_only_while_it_is_on_screen(tmp_pa
     assert "fotos novas" in html and 'hit("new")' in html and "location.reload()" in html
 
 
-def test_the_reload_comes_back_to_the_moment_on_screen(tmp_path):
+def test_the_reload_goes_to_the_first_new_photo_and_marks_the_new_ones(tmp_path):
     html = build_gallery(run_dir(tmp_path), tmp_path / "site", dict(EVENT)).read_text()
-    assert '"#volta="' in html and "/^#volta=" in html  # which moment and how far into it, read back after the reload
-    assert 'history.scrollRestoration="manual"' in html
+    assert '"#novas="' in html and "/^#novas=(.+)$/" in html  # the new ids ride in the address across the reload
+    assert "NEW.has(p.id)" in html and 'content:"Nova"' in html  # tiles built later are marked too
+    assert 'history.scrollRestoration="manual"' in html and "#volta=" not in html

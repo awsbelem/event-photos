@@ -58,7 +58,8 @@ first, marked "Nova", with the ones already reviewed folded below. Output in `ou
 `run/` (report, review), `site/` (the gallery), `instagram/` (approved frames, ready to post).
 
 A gallery left open sees the next publish: while it is on screen it checks `photos.json` (published beside the
-page, never cached) every minute and offers "N fotos novas · Ver", which reloads the page at the same moment.
+page, never cached) every minute and offers "N fotos novas · Ver", which reloads the page at the first new photo,
+with the new ones marked "Nova" for a few seconds.
 
 ## AWS
 

@@ -286,6 +286,7 @@ let queued=false;
 function tile(p){const a=document.createElement("a"),im=document.createElement("img");
   a.className="tile";a.href="#foto="+encodeURIComponent(p.id);a.dataset.id=p.id;
   im.src="thumbs/"+p.id+".webp";im.width=p.w;im.height=p.h;im.loading="lazy";im.decoding="async";im.alt=p.a;
+  if(NEW.has(p.id)){a.classList.add("new");setTimeout(()=>a.classList.add("seen"),8000);}
   a.append(im);return a;}
 function reserve(s){const cs=getComputedStyle(s.grid),cols=cs.gridTemplateColumns.split(" ").length||1,
   size=parseFloat(cs.gridTemplateColumns)||0,gap=parseFloat(cs.rowGap)||0,
@@ -479,6 +480,10 @@ h2{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:6px 0 16px
 @media(min-width:700px){.grid{grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}}
 .rest{overflow-anchor:none} /* the browser keeps the screen still by the tiles, not by the space they will fill */
 .tile{display:block;overflow:hidden;border-radius:8px;background:var(--raised);aspect-ratio:1/1}
+.tile.new{position:relative}
+.tile.new::after{content:"Nova";position:absolute;top:8px;left:8px;background:var(--orange);color:var(--navy);
+  font:800 13px/1 FONT;padding:6px 8px;border-radius:7px;box-shadow:0 2px 8px #0006;transition:opacity .4s}
+.tile.new.seen::after{opacity:0}
 .tile img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .35s cubic-bezier(.16,1,.3,1)}
 .tile:hover img{transform:scale(1.04)}
 footer{max-width:1200px;margin:0 auto;padding:28px 20px 0;color:var(--muted);font-size:15px;border-top:1px solid var(--rule)}
@@ -567,25 +572,34 @@ footer ol{margin:8px 0 0;padding-left:20px;line-height:1.7}
 """.replace("FONT", brand.FONT_STACK)
 
 # The sticky bar names the moment on screen and lights every node already reached: the day fills in as it is scrolled.
+# The photos the "fotos novas" button brought in (FRESH_JS below), read before the first tiles are built.
+NEW_JS = r"""
+const NEW=(()=>{const m=location.hash.match(/^#novas=(.+)$/);if(!m)return new Set();
+  history.replaceState(null,"",location.pathname);return new Set(decodeURIComponent(m[1]).split(","));})();
+"""
+
 FRESH_JS = r"""
 /* New photos while the page is open: the list beside the page is checked every minute while the page is on screen
-   (each failure doubles the wait, up to 10 min); new photos bring up a button that reloads the page where it is. */
-(()=>{const known=new Set(PHOTOS.map(p=>p.id)),btn=document.querySelector(".fresh");let wait=60000,timer=0;
+   (each failure doubles the wait, up to 10 min); new photos bring up a button that reloads the page at the first of
+   them, marked "Nova" for a few seconds. */
+(()=>{const known=new Set(PHOTOS.map(p=>p.id)),btn=document.querySelector(".fresh");let wait=60000,timer=0,fresh=[];
 function later(){clearTimeout(timer);if(document.visibilityState==="visible")timer=setTimeout(check,wait);}
 async function check(){
   try{const r=await fetch("PHOTO_LIST",{cache:"no-cache"});if(!r.ok)throw new Error(r.status);
-    const n=(await r.json()).photos.filter(p=>!known.has(p.id)).length;wait=60000;
+    fresh=(await r.json()).photos.filter(p=>!known.has(p.id)).map(p=>p.id);wait=60000;const n=fresh.length;
     if(n){btn.textContent=n+(n===1?" foto nova":" fotos novas")+" · Ver";btn.classList.add("show");}}
   catch(e){wait=Math.min(wait*2,600000);}
   later();}
-/* The reload keeps the visitor's place: the moment on screen and how far into it, in the address, read back below
-   once the sections have their heights again (tiles are built as the page scrolls, so the browser cannot). */
-btn.onclick=()=>{hit("new");const s=[...document.querySelectorAll("main section")].find(el=>el.getBoundingClientRect().bottom>80);
-  if(s)history.replaceState(null,"",location.pathname+"#volta="+s.id+"."+Math.round(-s.getBoundingClientRect().top));
-  history.scrollRestoration="manual";location.reload();};
-const back=location.hash.match(/^#volta=([\w-]+)\.(-?\d+)$/);
-if(back){history.replaceState(null,"",location.pathname);const el=document.getElementById(back[1]);
-  if(el)scrollTo(0,el.getBoundingClientRect().top+scrollY+Number(back[2]));queue();}
+/* The reload carries the new ids in the address (NEW reads them back), and the page then goes to the first of them. */
+btn.onclick=()=>{hit("new");history.scrollRestoration="manual";
+  history.replaceState(null,"",location.pathname+"#novas="+encodeURIComponent(fresh.slice(0,60).join(",")));location.reload();};
+const first=NEW.size&&PHOTOS.find(p=>NEW.has(p.id));
+if(first){const s=SECTIONS[first.m],k=s.items.indexOf(first),cs=getComputedStyle(s.grid),
+    cols=cs.gridTemplateColumns.split(" ").length||1,row=(parseFloat(cs.gridTemplateColumns)||0)+(parseFloat(cs.rowGap)||0);
+  scrollTo(0,s.grid.getBoundingClientRect().top+scrollY+Math.floor(k/cols)*row-innerHeight/3);
+  let tries=0;const go=()=>{const t=s.grid.querySelector('[data-id="'+CSS.escape(first.id)+'"]');
+    if(t)t.scrollIntoView({block:"center"});else if(tries++<30){tick();requestAnimationFrame(go);}};
+  requestAnimationFrame(go);}
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")check();else clearTimeout(timer);});
 later();})();
 """.replace("PHOTO_LIST", PHOTO_LIST)
@@ -775,6 +789,7 @@ function close(){{if(history.state&&history.state.viewer)history.back();else{{hi
 addEventListener("popstate",()=>{{const m=location.hash.match(/^#foto=(.+)$/);
   if(m&&!viewer.classList.contains("open"))open(decodeURIComponent(m[1]),false);
   else if(!m&&viewer.classList.contains("open"))hide();}});
+{NEW_JS}
 {TILES_JS}
 {NOW_JS}
 {FRESH_JS}
