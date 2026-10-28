@@ -89,14 +89,12 @@ def test_deploy_ships_the_app_and_keeps_other_settings():
     assert s.clients["lambda"].env["ENABLED"] == "0"
 
 
-def test_the_stack_id_salt_is_replaced_by_a_secret_once():
+def test_the_photo_switch_follows_photo_ok():
     s = stack()
-    s.clients["lambda"].env["IP_SALT"] = "arn:aws:cloudformation:sa-east-1:123:stack/x-faces/abc"
-    s.configure(95, enabled=True)
-    salt = s.clients["lambda"].env["IP_SALT"]
-    assert not salt.startswith("arn:") and len(salt) == 32
-    s.configure(95, enabled=False)
-    assert s.clients["lambda"].env["IP_SALT"] == salt  # kept, so rate-limit counters survive a toggle
+    s.deploy(95, enabled=True)
+    assert s.clients["lambda"].env["PHOTO_OK"] == "0" and not s.photo_on()
+    s.deploy(95, enabled=True, photo=True)
+    assert s.clients["lambda"].env["PHOTO_OK"] == "1" and s.photo_on()
 
 
 def test_deletion_is_scheduled_once_and_rescheduling_updates_it():

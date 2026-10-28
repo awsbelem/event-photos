@@ -10,7 +10,6 @@ import hashlib
 import io
 import json
 import re
-import secrets
 import time
 import zipfile
 from dataclasses import dataclass, field
@@ -33,6 +32,11 @@ class FaceSearchConfig:
     threshold: float = 95.0
     retention_days: int = 30
     legal_ok: str | None = None  # date of the written legal opinion
+    photo_ok: str | None = None  # date of the sign-off for searching with a photo from the phone (off without it)
+
+    @property
+    def photo(self) -> bool:
+        return bool(self.photo_ok)
 
 
 def face_search_config(event: dict) -> FaceSearchConfig:
@@ -44,6 +48,7 @@ def face_search_config(event: dict) -> FaceSearchConfig:
         threshold=float(raw.get("threshold", 95.0)),
         retention_days=int(raw.get("retention_days", 30)),
         legal_ok=raw.get("legal_ok"),
+        photo_ok=raw.get("photo_ok") or None,
     )
     low, high = THRESHOLD_RANGE
     if not low <= config.threshold <= high:
@@ -51,9 +56,21 @@ def face_search_config(event: dict) -> FaceSearchConfig:
     low, high = RETENTION_RANGE
     if not low <= config.retention_days <= high:
         raise SystemExit(f"face_search.retention_days deve ficar entre {low} e {high} (está {config.retention_days}).")
+    if config.photo_ok:
+        for key in ("legal_ok", "photo_ok"):
+            if not _is_date(getattr(config, key)):
+                raise SystemExit(f"face_search.photo_ok exige face_search.{key} com uma data (AAAA-MM-DD).")
     if config.enabled and not config.stack:
         raise SystemExit("face_search.enabled exige face_search.stack (a stack da busca em sa-east-1).")
     return config
+
+
+def _is_date(value) -> bool:
+    try:
+        dt.date.fromisoformat(str(value))
+        return True
+    except ValueError:
+        return False
 
 
 # --- face index (desktop side) ------------------------------------------------------------------
@@ -231,8 +248,8 @@ class FaceStack:
     def schedule_name(self) -> str:
         return f"event-photos-{self.slug}-faces-delete"
 
-    def deploy(self, threshold: float, enabled: bool = True) -> None:
-        """Upload the search function and set its threshold and on/off switch, keeping other settings."""
+    def deploy(self, threshold: float, enabled: bool = True, photo: bool = False) -> None:
+        """Upload the search function and set its threshold and switches, keeping other settings."""
         fn = self.clients["lambda"]
         name = self.outputs["SearchFunctionName"]
         buf = io.BytesIO()
@@ -240,15 +257,13 @@ class FaceStack:
             z.write(APP, "index.py")
         fn.update_function_code(FunctionName=name, ZipFile=buf.getvalue())
         _wait_updated(fn, name)
-        self.configure(threshold, enabled)
+        self.configure(threshold, enabled, photo)
 
-    def configure(self, threshold: float, enabled: bool) -> None:
+    def configure(self, threshold: float, enabled: bool, photo: bool = False) -> None:
         fn = self.clients["lambda"]
         name = self.outputs["SearchFunctionName"]
         env = fn.get_function(FunctionName=name)["Configuration"].get("Environment", {}).get("Variables", {})
-        env |= {"THRESHOLD": f"{threshold:g}", "ENABLED": "1" if enabled else "0"}
-        if not env.get("IP_SALT") or env["IP_SALT"].startswith("arn:"):  # the template's stack id is not secret
-            env["IP_SALT"] = secrets.token_hex(16)
+        env |= {"THRESHOLD": f"{threshold:g}", "ENABLED": "1" if enabled else "0", "PHOTO_OK": "1" if photo else "0"}
         fn.update_function_configuration(FunctionName=name, Environment={"Variables": env})
         _wait_updated(fn, name)
 
@@ -285,6 +300,11 @@ class FaceStack:
                 if error_code(exc) != "ResourceNotFoundException":
                     raise
 
+    def photo_on(self) -> bool:
+        """Whether the deployed function takes photos from the phone."""
+        config = self.clients["lambda"].get_function(FunctionName=self.outputs["SearchFunctionName"])["Configuration"]
+        return config.get("Environment", {}).get("Variables", {}).get("PHOTO_OK") == "1"
+
     def face_count(self) -> int | None:
         try:
             return self.clients["rekognition"].describe_collection(
@@ -314,9 +334,7 @@ def missing_preconditions(event: dict, settings: FaceSearchConfig, ack: Path) ->
     missing = []
     if not settings.stack:
         missing.append("face_search.stack com a stack da busca em sa-east-1")
-    try:
-        dt.date.fromisoformat(str(settings.legal_ok))
-    except ValueError:
+    if not _is_date(settings.legal_ok):
         missing.append("face_search.legal_ok com a data do parecer jurídico por escrito (AAAA-MM-DD)")
     if not event.get("removal_contact"):
         missing.append("removal_contact com o e-mail para pedidos de remoção")

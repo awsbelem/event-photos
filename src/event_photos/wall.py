@@ -6,7 +6,9 @@ shows new photos first. Page text is user-facing, so it is in Portuguese.
 """
 from __future__ import annotations
 
+import base64
 from html import escape
+from pathlib import Path
 
 from . import brand
 
@@ -77,7 +79,7 @@ body.idle,body.idle *{cursor:none}
   gap:calc(var(--u)*2)}
 .qr{width:calc(var(--u)*17.6);height:calc(var(--u)*17.6);background:#fff;border-radius:calc(var(--u)*1.2);
   overflow:hidden}
-.qr svg{display:block;width:100%;height:100%}
+.qr svg,.qr img{display:block;width:100%;height:100%}
 .call{margin:0;font-size:calc(var(--u)*3.6);font-weight:800;letter-spacing:-.02em;line-height:1.1}
 .how{margin:calc(var(--u)*.7) 0 0;color:var(--muted);font-size:calc(var(--u)*2.2);font-weight:600}
 .address{margin:calc(var(--u)*1.2) 0 0;color:var(--ink);font-size:calc(var(--u)*2.2);font-weight:700;
@@ -155,7 +157,11 @@ def page(event: dict, photo_list: str, beacon: str, icons: tuple[str, str]) -> s
     # A short link (event.json "short_url") makes a sparser QR, readable from farther away, and is easier to type.
     url = event.get("short_url") or event.get("url") or ""
     address = url.split("://", 1)[-1].rstrip("/")  # what a visitor types: the host, without https://
-    qr = (f'<div class="qr" role="img" aria-label="QR code da galeria">{_qr(url)}</div>' if url else "")
+    if event.get("wall_qr"):  # made and redirected elsewhere: shown as it is, whatever address the event has
+        qr_uri = f"data:image/png;base64,{base64.b64encode(Path(event['wall_qr']).read_bytes()).decode()}"
+        qr = f'<div class="qr"><img src="{qr_uri}" alt="QR code da galeria"></div>'
+    else:
+        qr = f'<div class="qr" role="img" aria-label="QR code da galeria">{_qr(url)}</div>' if url else ""
     banner = f'<p class="banner">{escape(event["banner"])}</p>' if event.get("banner") else ""
     script = (SCRIPT.replace("PHOTO_LIST", photo_list).replace("BEACON", beacon)
               .replace("REFRESH_MS", str(REFRESH_MS)).replace("HEARTBEAT_MS", str(HEARTBEAT_MS))

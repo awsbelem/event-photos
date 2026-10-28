@@ -47,7 +47,8 @@ uv run event-photos event <slug> --publish --skip-review   # reuse the last appr
 `assets/frames/`, the first is the default), `aws_profile` (default `event-photos`), `timezone` (default
 `America/Belem`), `clock_offsets` (e.g. `{"ana-souza": "-0:05"}` for a camera clock that was off),
 `strength`, `face_search`, `removal_contact`, `pages_project`, `short_url` (a short link to the gallery, for the
-venue screen's QR code).
+venue screen's QR code), `wall_qr` (an image of a QR code made elsewhere, shown as it is on the venue screen;
+path relative to event.json).
 
 Values that must not be versioned — the removal contact, whether face search is on — go in
 `events/<slug>/event.local.json` (gitignored), which overrides event.json key by key; `face-search
@@ -65,7 +66,9 @@ goes to the first and marks the new ones "Nova" for a few seconds.
 **Venue screen.** `wall.html`, beside the gallery, is for a TV or projector at the venue: open it full screen on a
 notebook ("Tela cheia"; `wall.html?s=12` shows each photo 12 s instead of 8). It shows one photo at a time, whole,
 inside the event's artwork, with its time, moment and photographer, and a QR code to the gallery (the stack's
-address, or `short_url`). It reads `photos.json` every minute and shows new photos first, marked "Nova".
+address, or `short_url`; or the `wall_qr` image). The three CD Norte events show the same fixed redirect,
+`https://aws-belem.woox.be/day`, and its QR (`assets/brand/cd-norte/wall-qr.png`): where they lead is changed at the
+redirect, not here. It reads `photos.json` every minute and shows new photos first, marked "Nova".
 It is the one page another site may put in an iframe (the gallery, upload and search pages refuse it); give the
 iframe `allow="fullscreen; screen-wake-lock"` so "Tela cheia" shows and the screen stays on. On AWS this takes a
 stack deploy (`infra/aws-gallery.yaml`, `WallHeadersPolicy`).
@@ -93,11 +96,25 @@ upload page (a Lambda URL that hands out one-file upload permissions), a logs bu
 and a publisher policy that can only publish this gallery, collect this inbox and read these logs.
 
 **Counts for the event report.** The gallery requests `e.gif?e=<action>` when a visitor opens the gallery or a
-photo, picks a frame, saves, shares, copies the @ or ends a selfie search (only the size of the result, in
-ranges). CloudFront's access log (standard logging v2, JSON, kept 90 days) records date, time, path, query,
+photo, picks a frame, saves, shares, copies the @ or ends a face search (only the size of the result, in
+ranges, and whether it used the camera or a photo). CloudFront's access log (standard logging v2, JSON, kept 90 days) records date, time, path, query,
 status, bytes, edge, cache result and User-Agent; never the viewer's IP, port or cookies, and the page keeps no
 identifier, so the counts are of actions, not people. The footer says so. Logging starts when the stack is
-deployed, so update the stacks before the event.
+deployed, so update the stacks before the event. Each publish also appends a line to
+`out/events/<slug>/rounds.jsonl` (when, uploads so far, the photos published for the first time), which travels
+with the event's state: the only record of when each photo reached the gallery.
+
+```bash
+scripts/aws.sh pull-state <slug>                          # the event's state, if it ran on the instance
+uv run event-photos stats <slug> [--since 2026-10-31] [--until 2026-10-31]
+```
+
+`stats` downloads the logs not yet downloaded to `out/events/<slug>/logs/` and writes
+`out/events/<slug>/report/index.html` (one file, in Portuguese, print it to PDF) and `report.json`: photos and
+photographers, rounds with the median time from photo to gallery, opens by hour, saves and shares by format and
+frame, links sent and pasted (preview bots fetching the cards), face searches by result and by camera or photo,
+hours of venue screen, the most opened and most spread photos (minors left out) and GB served. Times are in the
+event's time zone; known robots are left out.
 
 Create the stacks from AWS CloudShell with `scripts/cloudshell_event_stacks.sh` (gallery and face search,
 for several events at once; see its header). With `PUBLISHER_USER=<an existing publisher>`, new events
@@ -129,17 +146,21 @@ in. It processes biometric data, so it is gated on a written legal sign-off.
 
 **Privacy by design**
 - Collection, search function, rate-limit table and deletion schedule live in **sa-east-1**.
-- The gallery asks for explicit consent, uses the live front camera only and sends a 640 px JPEG; the
+- The gallery asks for explicit consent, uses the live front camera and sends a 640 px JPEG; the
   selfie is compared and discarded, never stored or logged (logs hold platform lines only, kept 7 days).
-- Rate limits key on a salted hash of the caller's IP, never the IP itself, and expire on their own.
+- A photo from the phone ("Usar uma foto minha") is offered only where `photo_ok` holds the date of its own
+  sign-off, since a file may show someone else: a second consent ("Esta foto é minha…"), exactly one face,
+  and a 1280 px JPEG redrawn in the browser, so no EXIF or location leaves the phone.
+- Nothing about the caller is kept: the only limit is one hourly counter for everyone.
 - Photos marked "Tem menor de idade (fora da busca)" in the review are never indexed.
 - The collection is deleted on a schedule (event date + `retention_days`, default 30) and on demand.
 - `face-search enable` refuses to run without `legal_ok` (date of the legal sign-off) and
-  `removal_contact`, and asks to confirm the account's AI services opt-out policy.
+  `removal_contact`, and asks to confirm the account's AI services opt-out policy. `photo_ok` needs
+  `legal_ok` too; `enable` sets the function's `PHOTO_OK` switch from it (rerun it after changing `photo_ok`).
 
 **Setup:** the face search stack (`infra/aws-face-search.yaml`, sa-east-1, `event-photos-<slug>-faces`,
 created by the CloudShell script) and `"face_search": {"stack": "event-photos-<slug>-faces",
-"legal_ok": "<date>"}` in event.json. The review then shows faces per photo and the minors toggle.
+"legal_ok": "<date>", "photo_ok": "<date, optional>"}` in event.json. The review then shows faces per photo and the minors toggle.
 
 ```bash
 uv run event-photos face-search <slug> enable --confirm-ai-opt-out   # deploys the search, creates the
@@ -148,8 +169,9 @@ uv run event-photos event <slug> --publish                            # indexes 
 uv run event-photos face-search <slug> status | disable | purge       # purge deletes the collection now
 ```
 
-**Limits:** 5 searches a minute and 30 an hour per caller (an IPv4 address, or an IPv6 /64) and
-`GLOBAL_LIMIT` (2000) an hour in all. Matches need 95 % similarity: no wrong matches is the priority, so
+**Limits:** `GLOBAL_LIMIT` (2000) searches an hour in all, camera and photo together, which caps the bill.
+There is no limit per caller: at the venue hundreds of phones share one address (the Wi-Fi, the carriers' NAT),
+and a limit per address would turn them all away at once. Matches need 95 % similarity: no wrong matches is the priority, so
 faces in profile or very small in the frame are often missed, and the schedule sections stay the fallback.
 Cost: about US$ 0.0013 per photo indexed and per face count in the review, US$ 0.0026 per search
 (sa-east-1 list prices, 2026); set an AWS Budgets alert.

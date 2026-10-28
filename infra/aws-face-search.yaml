@@ -96,7 +96,6 @@ Resources:
           RATE_TABLE: !Ref RateTable
           ALLOWED_ORIGIN: !Ref GalleryOrigin
           GLOBAL_LIMIT: "2000"  # searches an hour across all callers
-          IP_SALT: !Ref AWS::StackId  # placeholder; `face-search enable` replaces it with a random secret
       Code:
         ZipFile: |
           def handler(event, context):

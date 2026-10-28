@@ -32,6 +32,15 @@ def test_search_ui_has_consent_gate_and_live_camera_only(tmp_path):
     assert "30/11/2026" in html and "x@y.z" in html and '"h-1": "a"' in html
 
 
+def test_a_photo_from_the_phone_only_where_the_publish_allows_it(tmp_path):
+    ui = {"url": "https://u.example/", "ids": {}, "until": "30/11/2026", "photo": True}
+    html = build_gallery(run_dir(tmp_path), tmp_path / "site", dict(EVENT, face_search_ui=ui)).read_text()
+    assert 'class="btn use-photo" disabled' in html and 'data-step="file"' in html
+    assert "Esta foto é minha" in html and 'class="btn primary pick" disabled' in html
+    assert '<input type="file" accept="image/*" tabindex="-1"' in html and "capture" not in html
+    assert "A imagem não é guardada" in html and '"photo"' not in html.split("FINDER=")[1].split(";")[0]
+
+
 def test_names_cannot_end_the_script_block_and_pages_cannot_be_framed(tmp_path):
     run = tmp_path / "run"
     (run / "selected").mkdir(parents=True)

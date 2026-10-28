@@ -13,16 +13,18 @@ from .enhance import LOOKS
 from .faces import (FACE_ACK, FACE_COUNTS, FACE_STATE, FaceStack, deletion_time, face_search_config,
                     missing_preconditions)
 from .frames import DEFAULT_TEMPLATE, FRAMES_DIR
-from .gallery import FRAME_FORMATS, OWNER_SEP, build_gallery, load_event, local_path, parse_offset
+from .gallery import FRAME_FORMATS, OWNER_SEP, PHOTO_LIST, build_gallery, load_event, local_path, parse_offset
 from .imageio import read_capture_times, read_image_sizes
 from .inbox import DATED_SUFFIX, Inbox, slugify, sync_links
 from .pipeline import DEFAULT_MODELS, Settings, process
 from . import publish as publish_mod
+from . import stats as stats_mod
 from .review import load_minors, load_review, review
 
 ROOT = Path(__file__).resolve().parents[2]
 EVENTS_DIR = ROOT / "events"
 EVENTS_OUT = ROOT / "out" / "events"
+ROUNDS = "rounds.jsonl"  # in the event's out folder: one line per publish, for the event report
 DEFAULT_WORKERS = int(os.environ.get("EVENT_PHOTOS_WORKERS", min(8, os.cpu_count() or 4)))
 
 
@@ -87,8 +89,27 @@ def event(args: argparse.Namespace) -> None:
             publish_mod.cloudflare_pages(site, config["pages_project"])
         else:
             raise SystemExit(f"Defina \"aws_stack\" ou \"pages_project\" em {config_path} para publicar.")
+        record_round(work / ROUNDS, site, len(wanted), config.get("timezone", "America/Belem"))
     else:
         print(f"ver no computador: python3 -m http.server -d {site} -b 127.0.0.1 8765")
+
+
+def record_round(log: Path, site: Path, uploads: int, timezone: str, now: dt.datetime | None = None) -> dict:
+    """Append this publish to the event's rounds log: when, how many uploads, and which photos went out for the
+    first time. Each publish replaces photos.json, so this is the only record of when a photo reached the gallery."""
+    from zoneinfo import ZoneInfo
+    seen = set()
+    if log.exists():
+        for line in log.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                seen.update(json.loads(line)["new"])
+    ids = [p["id"] for p in json.loads((site / PHOTO_LIST).read_text(encoding="utf-8"))["photos"]]
+    when = (now or dt.datetime.now(dt.timezone.utc)).astimezone(ZoneInfo(timezone))
+    entry = {"published": when.isoformat(timespec="seconds"), "uploads": uploads,
+             "new": [i for i in ids if i not in seen], "total": len(ids)}
+    with log.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    return entry
 
 
 LOW_RES_LONG_SIDE = 2000  # px; WhatsApp sends 1600, phones shoot 4000+
@@ -166,7 +187,7 @@ def _sync_faces(config: dict, run_dir: Path, slug: str) -> dict | None:
         print(f"aviso: busca por rosto não atualizada ({type(exc).__name__}: {exc}). Publicando sem a busca.")
         return None
     indexed = json.loads((run_dir / FACE_STATE).read_text())["photos"]
-    return {"url": stack.outputs["SearchUrl"],
+    return {"url": stack.outputs["SearchUrl"], "photo": settings.photo,
             "ids": {v["external"]: pid for pid, v in indexed.items() if v["external"] != pid},
             "until": f"{deletion_time(config['date'], settings.retention_days):%d/%m/%Y}"}
 
@@ -278,21 +299,22 @@ def face_search_cmd(args: argparse.Namespace) -> None:
             raise SystemExit("A busca por rosto não pode ser ligada ainda. Falta:\n  - " + "\n  - ".join(missing))
     stack = FaceStack.load(settings.stack, config.get("aws_profile", publish_mod.AWS_PROFILE), args.slug)
     if args.action == "enable":
-        stack.deploy(settings.threshold, enabled=True)
+        stack.deploy(settings.threshold, enabled=True, photo=settings.photo)
         stack.index.ensure_collection()
         when = deletion_time(config["date"], settings.retention_days)
         stack.schedule_deletion(when, config.get("timezone", "America/Belem"))
         _set_face_search(args.slug, enabled=True)
-        print(f"Busca por rosto ligada. A coleção será apagada em {when:%d/%m/%Y às %H:%M}.\n"
+        print(f"Busca por rosto ligada{' (selfie e foto do celular)' if settings.photo else ' (só selfie)'}. "
+              f"A coleção será apagada em {when:%d/%m/%Y às %H:%M}.\n"
               "Publique de novo (event --publish) para indexar as fotos e mostrar o botão na galeria.")
     elif args.action == "disable":
-        stack.configure(settings.threshold, enabled=False)
+        stack.configure(settings.threshold, enabled=False, photo=settings.photo)
         _set_face_search(args.slug, enabled=False)
         print("Busca por rosto desligada: a função não responde mais. Publique de novo para tirar o botão da galeria.")
     elif args.action == "purge":
         stack.purge()
         (work / "run" / FACE_STATE).unlink(missing_ok=True)
-        stack.configure(settings.threshold, enabled=False)
+        stack.configure(settings.threshold, enabled=False, photo=settings.photo)
         _set_face_search(args.slug, enabled=False)
         print("Coleção de rostos e agendamento apagados. Publique de novo para tirar o botão da galeria.")
     else:
@@ -302,8 +324,59 @@ def face_search_cmd(args: argparse.Namespace) -> None:
         print(f"ligada no event.json: {'sim' if settings.enabled else 'não'}\n"
               f"coleção: {'não existe' if count is None else f'{count} rostos'}\n"
               f"fotos indexadas (estado local): {indexed}\n"
+              f"busca com foto do celular: no event.json {settings.photo_ok or 'não'}; "
+              f"na função {'ligada' if stack.photo_on() else 'desligada'}\n"
               f"apagamento agendado: {when or 'nenhum'}\n"
               f"endereço da busca: {stack.outputs['SearchUrl']}")
+
+
+def stats_cmd(args: argparse.Namespace) -> None:
+    """The event report from the gallery's CloudFront logs, the rounds log and the review state."""
+    from zoneinfo import ZoneInfo
+    config = load_event(EVENTS_DIR / args.slug / "event.json")
+    if not config.get("aws_stack"):
+        raise SystemExit(f"Defina \"aws_stack\" em events/{args.slug}/event.json: o relatório lê os logs da galeria.")
+    work, profile = EVENTS_OUT / args.slug, config.get("aws_profile", publish_mod.AWS_PROFILE)
+    run_dir = work / "run"
+    if not (run_dir / "metrics.json").exists():
+        raise SystemExit(f"Sem o estado do evento em {work}. Traga-o da instância: scripts/aws.sh pull-state {args.slug}")
+    tz = ZoneInfo(config.get("timezone", "America/Belem"))
+    outputs = publish_mod.stack_outputs(config["aws_stack"], profile)
+    if "LogsBucketName" not in outputs:
+        raise SystemExit("A stack da galeria ainda não tem o bucket de logs: atualize-a (infra/aws-gallery.yaml).")
+    print("baixando os logs…")
+    stats_mod.download_logs(outputs["LogsBucketName"], work / "logs", profile)
+    since, until = (dt.date.fromisoformat(d) if d else None for d in (args.since, args.until))
+    hits = stats_mod.read_logs(work / "logs", tz, since, until)
+    base = outputs["Url"].rstrip("/")
+    listing = json.loads(stats_mod.fetch(f"{base}/{PHOTO_LIST}"))
+
+    metrics = json.loads((run_dir / "metrics.json").read_text())
+    offsets = {o: parse_offset(v) for o, v in config.get("clock_offsets", {}).items()}
+    taken = {}
+    for r in metrics["photos"]:
+        pid = Path(r["output"]).stem
+        if r.get("capture_time"):  # the camera's clock, read as the event's local time, as in the gallery
+            local = dt.datetime.fromisoformat(r["capture_time"]) + offsets.get(pid.partition(OWNER_SEP)[0], dt.timedelta())
+            taken[pid] = local.replace(tzinfo=tz) if local.tzinfo is None else local.astimezone(tz)
+    stems = {r["name"]: Path(r["output"]).stem for r in metrics["photos"]}
+    minors = {stems[n] for n in load_minors(run_dir) if n in stems}
+    frames = {f["key"]: f.get("label", f["key"]) for f in metrics["stats"].get("frames", [])}
+
+    numbers = stats_mod.compute(hits, listing, stats_mod.read_rounds(work / ROUNDS), taken, frames, minors)
+    wanted = {p["id"] for group in numbers["highlights"].values() for p in group}
+    thumbs = {}
+    for pid in wanted:
+        try:
+            thumbs[pid] = stats_mod.fetch(f"{base}/thumbs/{pid}.webp")
+        except OSError:
+            print(f"aviso: miniatura de {pid} indisponível")
+    out = work / "report"
+    out.mkdir(exist_ok=True)
+    (out / "report.json").write_text(json.dumps(numbers, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    (out / "index.html").write_text(stats_mod.render(config, numbers, thumbs), encoding="utf-8")
+    print(f"{len(hits)} registros · {numbers['reach']['opens']} aberturas · {numbers['find']['searches']} buscas\n"
+          f"relatório → {out / 'index.html'} (imprima como PDF pelo navegador)\nnúmeros → {out / 'report.json'}")
 
 
 def main() -> None:
@@ -337,6 +410,12 @@ def main() -> None:
     fs.add_argument("--confirm-ai-opt-out", action="store_true",
                     help="confirma que a política de opt-out de serviços de IA da AWS está ativa na conta")
     fs.set_defaults(func=face_search_cmd)
+
+    st = sub.add_parser("stats", help="relatório do evento a partir dos logs da galeria")
+    st.add_argument("slug", help="pasta em events/ com o event.json")
+    st.add_argument("--since", help="primeiro dia (AAAA-MM-DD), no horário do evento")
+    st.add_argument("--until", help="último dia (AAAA-MM-DD), no horário do evento")
+    st.set_defaults(func=stats_cmd)
 
     p = sub.add_parser("run", help="processa uma pasta de fotos")
     p.add_argument("input")

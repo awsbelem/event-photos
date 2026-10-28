@@ -2,6 +2,8 @@
   "name": "Jantar com palestrantes — AWS Community Day Norte",
   "heading": "Jantar com palestrantes",
   "date": "2026-10-30",
+  "short_url": "https://aws-belem.woox.be/day",
+  "wall_qr": "../../assets/brand/cd-norte/wall-qr.png",
   "place": "Belém/PA",
   "photographer": "Renato Siqueira",
   "accent": "#f28528",
@@ -17,6 +19,7 @@
     "enabled": false,
     "stack": "event-photos-cd-norte-2026-jantar-faces",
     "legal_ok": "2026-10-25",
+    "photo_ok": "2026-10-24",
     "retention_days": 31
   }
 }

@@ -32,3 +32,16 @@ def test_local_file_overrides_and_merges_face_search(tmp_path):
     event = load_event(tmp_path / "event.json")
     assert event["removal_contact"] == "a@b.c"
     assert event["face_search"] == {"enabled": True, "stack": "s", "legal_ok": "2026-10-25"}
+
+
+def test_photo_from_the_phone_is_off_without_its_own_sign_off():
+    assert face_search_config({"face_search": {"legal_ok": "2026-10-25"}}).photo is False
+    c = face_search_config({"face_search": {"legal_ok": "2026-10-25", "photo_ok": "2026-10-28"}})
+    assert c.photo and c.photo_ok == "2026-10-28"
+
+
+@pytest.mark.parametrize("raw", [{"photo_ok": "2026-10-28"}, {"legal_ok": "sim", "photo_ok": "2026-10-28"},
+                                 {"legal_ok": "2026-10-25", "photo_ok": "sim"}])
+def test_photo_ok_needs_both_dates(raw):
+    with pytest.raises(SystemExit, match="photo_ok"):
+        face_search_config({"face_search": raw})

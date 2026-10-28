@@ -4,6 +4,7 @@
   "date": "2026-10-31",
   "place": "FACI Wyden · Belém/PA",
   "short_url": "https://aws-belem.woox.be/day",
+  "wall_qr": "../../assets/brand/cd-norte/wall-qr.png",
   "photographer": "Renato Siqueira",
   "accent": "#f28528",
   "removal_contact": "",
@@ -55,6 +56,7 @@
   "face_search": {
     "enabled": false,
     "stack": "event-photos-aws-community-day-belem-2026-faces",
-    "legal_ok": "2026-10-25"
+    "legal_ok": "2026-10-25",
+    "photo_ok": "2026-10-24"
   }
 }

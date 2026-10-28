@@ -61,3 +61,19 @@ def test_the_wall_goes_up_with_the_pages(tmp_path):
 def test_a_short_link_takes_the_place_of_the_gallery_address(tmp_path):
     _, html = wall(tmp_path, url="https://d123.cloudfront.net", short_url="https://cdnorte.link/fotos")
     assert "cdnorte.link/fotos" in html and "d123.cloudfront.net" not in html
+
+
+def test_a_qr_made_elsewhere_is_shown_as_it_is(tmp_path):
+    import base64
+    from pathlib import Path
+
+    from event_photos.gallery import load_event
+    qr = Path(__file__).parents[1] / "assets" / "brand" / "cd-norte" / "wall-qr.png"
+    (tmp_path / "event.json").write_text(json.dumps(dict(EVENT, short_url="https://aws-belem.woox.be/day",
+                                                         wall_qr=str(qr))))
+    event = load_event(tmp_path / "event.json")
+    _, html = wall(tmp_path, **{k: event[k] for k in ("short_url", "wall_qr")}, url="https://d123.cloudfront.net")
+    plate = html.split('class="qr"')[1][:200]
+    assert '<img src="data:image/png;base64,' in plate and "<svg" not in plate
+    assert base64.b64encode(qr.read_bytes()).decode()[:80] in html
+    assert "aws-belem.woox.be/day" in html and "d123.cloudfront.net" not in html

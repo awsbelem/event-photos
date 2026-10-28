@@ -10,7 +10,7 @@
 # gets no new one, so the script can run again on an event to update its stacks.
 #
 # Updating a face search stack whose function changed resets the function's settings to the template's (the
-# on/off switch and the secret salt that `face-search enable` wrote); the script says when that happened.
+# on/off switches that `face-search enable` wrote); the script says when that happened.
 set -euo pipefail
 [ $# -gt 0 ] || { echo "usage: [PUBLISHER_USER=<iam user>] $0 <event slug>..." >&2; exit 1; }
 publisher="${PUBLISHER_USER:-}"

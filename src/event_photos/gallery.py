@@ -86,6 +86,8 @@ def load_event(path: Path) -> dict:
         event = merge_event(event, json.loads(local.read_text()))
     if isinstance(event.get("credits"), str):  # path to a CREDITS.json, relative to the event file
         event["credits"] = json.loads((path.parent / event["credits"]).read_text())
+    if event.get("wall_qr"):  # an image of a QR code made elsewhere, relative to the event file
+        event["wall_qr"] = path.parent / event["wall_qr"]
     event["moments"] = sorted((Moment(dt.time.fromisoformat(m["time"]), m["title"]) for m in event.get("schedule", [])),
                               key=lambda m: m.start)
     return event
@@ -385,7 +387,9 @@ FINDER_CSS = """
 .consent:has(input:checked){border-color:var(--orange)}
 .consent input{width:22px;height:22px;flex:none;margin-top:1px}
 .finder-small{font-size:13px}
-.finder-actions{display:flex;gap:8px;margin-top:8px}
+.finder-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.finder input[type=file]{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.finder-actions .use-photo{flex-basis:100%;order:-1;box-shadow:inset 0 0 0 1.5px var(--orange)}
 .finder video{width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:12px;background:#000;transform:scaleX(-1)}
 .finder-busy{font-size:17px;color:var(--ink)!important;padding:28px 0;text-align:center}
 .finder-message{color:var(--ink)!important}
@@ -395,31 +399,47 @@ FINDER_JS = """
 (()=>{const cfg=FINDER;if(!cfg)return;
 const dlg=document.querySelector(".finder"),btn=document.querySelector(".find-me"),bar=document.querySelector(".found"),
   consent=dlg.querySelector("#consent"),openCam=dlg.querySelector(".open-cam"),shoot=dlg.querySelector(".shoot"),
-  video=dlg.querySelector("video"),msg=dlg.querySelector(".finder-message"),steps=[...dlg.querySelectorAll("[data-step]")];
-let stream=null,last=null;
+  video=dlg.querySelector("video"),msg=dlg.querySelector(".finder-message"),steps=[...dlg.querySelectorAll("[data-step]")],
+  usePhoto=dlg.querySelector(".use-photo"),mine=dlg.querySelector("#mine"),pick=dlg.querySelector(".pick"),
+  file=dlg.querySelector("input[type=file]");
+let stream=null,last=null,source="cam";
 const step=n=>{steps.forEach(s=>s.hidden=s.dataset.step!==n);const f=dlg.querySelector("[data-step='"+n+"'] .primary");f&&f.focus();};
 const stop=()=>{if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}video.srcObject=null;};
 const tell=t=>{msg.textContent=t;step("message");};
-function openDlg(){last=document.activeElement;consent.checked=false;openCam.disabled=true;step("consent");dlg.hidden=false;
+function openDlg(){last=document.activeElement;consent.checked=false;openCam.disabled=true;
+  if(usePhoto){usePhoto.disabled=true;mine.checked=false;pick.disabled=true;}step("consent");dlg.hidden=false;
   document.body.style.overflow="hidden";behind.forEach(e=>e.inert=true);consent.focus();}
 function closeDlg(){stop();dlg.hidden=true;document.body.style.overflow="";behind.forEach(e=>e.inert=false);last&&last.focus();}
 btn.onclick=openDlg;dlg.querySelectorAll(".finder-close").forEach(b=>b.onclick=closeDlg);
-consent.onchange=()=>openCam.disabled=!consent.checked;
-async function camera(){
+consent.onchange=()=>{openCam.disabled=!consent.checked;if(usePhoto)usePhoto.disabled=!consent.checked;};
+async function camera(){source="cam";
   try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user"},audio:false});}
   catch(e){tell("Não conseguimos abrir a câmera. Permita o acesso à câmera nas configurações do navegador ou veja as fotos por momento.");return;}
   video.srcObject=stream;await video.play().catch(()=>{});step("camera");}
-openCam.onclick=()=>{if(consent.checked)camera();};dlg.querySelector(".retry").onclick=camera;
-shoot.onclick=async()=>{const w=video.videoWidth,h=video.videoHeight;if(!w)return;
-  const k=Math.min(1,640/Math.max(w,h)),c=document.createElement("canvas");c.width=Math.round(w*k);c.height=Math.round(h*k);
-  c.getContext("2d").drawImage(video,0,0,c.width,c.height);stop();step("busy");
-  const image=c.toDataURL("image/jpeg",0.85).split(",")[1];
+openCam.onclick=()=>{if(consent.checked)camera();};
+dlg.querySelector(".retry").onclick=()=>{if(source!=="file")return camera();step("file");mine.focus();};
+/* Redrawn on a canvas: only the pixels are sent, never the file's EXIF or location. */
+function snap(el,w,h,side){const k=Math.min(1,side/Math.max(w,h)),c=document.createElement("canvas");
+  c.width=Math.round(w*k);c.height=Math.round(h*k);c.getContext("2d").drawImage(el,0,0,c.width,c.height);
+  return c.toDataURL("image/jpeg",0.85).split(",")[1];}
+shoot.onclick=()=>{const w=video.videoWidth,h=video.videoHeight;if(!w)return;
+  const image=snap(video,w,h,640);stop();search(image,"camera");};
+if(usePhoto){
+  usePhoto.onclick=()=>{if(!consent.checked)return;source="file";step("file");mine.focus();};
+  mine.onchange=()=>pick.disabled=!mine.checked;
+  pick.onclick=()=>{if(mine.checked){file.value="";file.click();}};
+  /* A photo is larger than its face, unlike a selfie: 1280 px keeps a small face findable, at ~300 KB. */
+  file.onchange=()=>{const f=file.files[0];if(!f)return;const url=URL.createObjectURL(f),img=new Image();
+    img.onload=()=>{const image=snap(img,img.naturalWidth,img.naturalHeight,1280);URL.revokeObjectURL(url);search(image,"file");};
+    img.onerror=()=>{URL.revokeObjectURL(url);tell("Não deu para abrir essa foto. Tente outra ou use a câmera.");};
+    img.src=url;};}
+async function search(image,from){step("busy");const s=from==="file"?"file":"cam";
   try{const r=await fetch(cfg.url+"search",{method:"POST",headers:{"content-type":"application/json"},
-      body:JSON.stringify({consent:true,image})});
+      body:JSON.stringify({consent:true,image,source:from})});
     const data=await r.json().catch(()=>({error:"Busca indisponível agora. Tente de novo em instantes."}));
-    if(!r.ok){hit("find",{n:"erro"});tell(data.error);return;}
+    if(!r.ok){hit("find",{n:"erro",s});tell(data.error);return;}
     const ids=new Set(data.photos.map(x=>cfg.ids[x]||x)),n=PHOTOS.filter(p=>ids.has(p.id)).length;
-    hit("find",{n:n?n<6?"1-5":"6+":"0"});  /* how many were found, in ranges: nothing about the face */
+    hit("find",{n:n?n<6?"1-5":"6+":"0",s});  /* how many were found, in ranges, and how: nothing about the face */
     if(!n){tell(data.message||"Ainda não achamos fotos suas.");return;}
     closeDlg();filter(ids,data.note);}
   catch(e){tell("Sem conexão com a busca. Verifique a internet e tente de novo.");}};
@@ -428,7 +448,7 @@ function filter(ids,note){VIEW=PHOTOS.filter(p=>ids.has(p.id));layout(VIEW);
   bar.querySelector("p").textContent=note||"";bar.hidden=false;bar.focus();}
 bar.querySelector(".show-all").onclick=()=>{VIEW=PHOTOS;layout(PHOTOS);bar.hidden=true;btn.focus();};
 document.addEventListener("keydown",e=>{if(dlg.hidden)return;if(e.key==="Escape")closeDlg();
-  if(e.key==="Tab"){const f=[...dlg.querySelectorAll("button,input")].filter(el=>!el.disabled&&el.offsetParent);
+  if(e.key==="Tab"){const f=[...dlg.querySelectorAll("button,input:not([type=file])")].filter(el=>!el.disabled&&el.offsetParent);
     if(!f.length)return;const a=f[0],z=f[f.length-1];
     if(e.shiftKey&&document.activeElement===a){e.preventDefault();z.focus();}
     else if(!e.shiftKey&&document.activeElement===z){e.preventDefault();a.focus();}}});
@@ -442,16 +462,30 @@ def _finder(event: dict) -> tuple[str, str, str]:
     if not ui:
         return "", "", ""
     contact = event.get("removal_contact", "")
+    photo = bool(ui.get("photo"))
+    intro, agree = (("Tire uma selfie ou use uma foto sua e mostramos só as fotos em que você aparece.",
+                     "Autorizo comparar o meu rosto com os rostos das fotos deste evento. A imagem não é guardada.")
+                    if photo else
+                    ("Tire uma selfie e mostramos só as fotos em que você aparece.",
+                     "Autorizo comparar minha selfie com os rostos das fotos deste evento. A selfie não é guardada."))
+    use_photo = '<button class="btn use-photo" disabled>Usar uma foto minha</button>' if photo else ""
+    # No `capture`: the phone offers its photo library, not the camera. The input is hidden only to the eye:
+    # older iOS Safari ignores a scripted click on one that is not rendered.
+    file_step = """<div data-step="file" hidden><p>Escolha uma foto em que só você aparece, de frente.</p>
+<label class="consent"><input type="checkbox" id="mine"> Esta foto é minha. Buscar fotos de outra pessoa sem autorização dela não é permitido.</label>
+<input type="file" accept="image/*" tabindex="-1" aria-hidden="true">
+<div class="finder-actions"><button class="btn finder-close">Cancelar</button><button class="btn primary pick" disabled>Escolher foto</button></div></div>
+""" if photo else ""
     button = '<button class="btn primary find-me">Encontrar minhas fotos</button>'
     bar = ('<div class="found" hidden tabindex="-1"><h2></h2><button class="btn show-all">Ver todas as fotos</button>'
            '<p></p></div>')
     dialog = f"""<div class="finder" role="dialog" aria-modal="true" aria-labelledby="finder-title" hidden>
 <div class="finder-box"><h2 id="finder-title">Encontrar minhas fotos</h2>
-<div data-step="consent"><p>Tire uma selfie e mostramos só as fotos em que você aparece.</p>
-<label class="consent"><input type="checkbox" id="consent"> Autorizo comparar minha selfie com os rostos das fotos deste evento. A selfie não é guardada.</label>
+<div data-step="consent"><p>{intro}</p>
+<label class="consent"><input type="checkbox" id="consent"> {agree}</label>
 <p class="finder-small">Os rostos das fotos ficam guardados até {escape(ui["until"])} e depois são apagados.{f" Para sair da busca, escreva para {escape(contact)}." if contact else ""}</p>
-<div class="finder-actions"><button class="btn finder-close">Cancelar</button><button class="btn primary open-cam" disabled>Abrir câmera</button></div></div>
-<div data-step="camera" hidden><video playsinline muted aria-label="Câmera frontal"></video>
+<div class="finder-actions"><button class="btn finder-close">Cancelar</button>{use_photo}<button class="btn primary open-cam" disabled>Abrir câmera</button></div></div>
+{file_step}<div data-step="camera" hidden><video playsinline muted aria-label="Câmera frontal"></video>
 <div class="finder-actions"><button class="btn finder-close">Cancelar</button><button class="btn primary shoot">Tirar selfie</button></div></div>
 <div data-step="busy" hidden><p class="finder-busy" role="status">Procurando suas fotos…</p></div>
 <div data-step="message" hidden><p class="finder-message" role="alert"></p>
@@ -748,7 +782,7 @@ def _page(event: dict, photos: list[GalleryPhoto], designs: list[dict], card: by
     mention = (f'ao postar, marque <a href="https://www.instagram.com/{handle}/" rel="noopener">@{handle}</a>.'
                if handle else "ao postar, marque o evento.")
     find_button, found_bar, finder_dialog = _finder(event)
-    finder_cfg = _script_json({"url": event["face_search_ui"]["url"], "ids": event["face_search_ui"]["ids"]}
+    finder_cfg = _script_json({k: event["face_search_ui"][k] for k in ("url", "ids")}
                               if event.get("face_search_ui") else None)
     tag = (f'<p class="tag">Ao postar, marque <button class="copy-tag" data-tag="@{handle}" '
            f'aria-label="Copiar @{handle}">@{handle}</button></p>' if handle else "")

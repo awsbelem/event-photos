@@ -16,13 +16,14 @@ class ApiError(Exception):
 
 
 class FakeRekognition:
-    def __init__(self, faces=1, matches=("a", "a", "b"), error=None, detect_error=None):
+    def __init__(self, faces=1, matches=("a", "a", "b"), error=None, detect_error=None, faint=0):
         self.n_faces, self.matches, self.error, self.detect_error = faces, matches, error, detect_error
+        self.faint = faint  # faces detected with low confidence, as in a blurry background
 
     def detect_faces(self, Image):
         if self.detect_error:
             raise self.detect_error
-        return {"FaceDetails": [{}] * self.n_faces}
+        return {"FaceDetails": [{"Confidence": 99.9}] * self.n_faces + [{"Confidence": 60.0}] * self.faint}
 
     def search_faces_by_image(self, CollectionId, Image, FaceMatchThreshold, MaxFaces, QualityFilter):
         assert FaceMatchThreshold == app.THRESHOLD
@@ -101,26 +102,6 @@ def test_closed_collection_and_throttling(clients):
     assert call({"consent": True, "image": SELFIE}) == (503, {"error": app.BUSY})
 
 
-def test_rate_limit_per_minute_and_per_hour(clients, monkeypatch):
-    for _ in range(5):
-        assert call({"consent": True, "image": SELFIE})[0] == 200
-    assert call({"consent": True, "image": SELFIE}) == (429, {"error": app.TOO_MANY})
-    assert call({"consent": True, "image": SELFIE}, ip="198.51.100.1")[0] == 200  # someone else
-    t = [3600 * 300.0]
-    monkeypatch.setattr(app.time, "time", lambda: t[0])
-    clients["dynamodb"] = FakeDynamo()
-    statuses = []
-    for i in range(31):
-        t[0] = 3600 * 300.0 + i * 61  # a new minute each time, all within one hour
-        statuses.append(call({"consent": True, "image": SELFIE}, ip="192.0.2.9")[0])
-    assert statuses[:30] == [200] * 30 and statuses[30] == 429
-
-
-def test_ip_is_never_stored_in_clear(clients):
-    call({"consent": True, "image": SELFIE})
-    assert all("203.0.113.7" not in k for k in clients["dynamodb"].counts)
-
-
 def test_only_post_to_search(clients):
     assert call({}, method="GET")[0] == 404 and call({}, path="/other")[0] == 404
 
@@ -138,20 +119,55 @@ def test_disabled_function_answers_nothing(clients, monkeypatch):
     assert call({"consent": True, "image": SELFIE}) == (410, {"error": app.DISABLED})
 
 
-def test_one_ipv6_prefix_is_one_caller(clients):
-    for i in range(5):
-        assert call({"consent": True, "image": SELFIE}, ip=f"2001:db8:1:2::{i + 1}")[0] == 200
-    assert call({"consent": True, "image": SELFIE}, ip="2001:db8:1:2:ffff::9")[0] == 429  # same /64
-    assert call({"consent": True, "image": SELFIE}, ip="2001:db8:1:3::1")[0] == 200  # another /64
-
-
 def test_global_cap_stops_everyone(clients, monkeypatch):
     monkeypatch.setattr(app, "GLOBAL_LIMIT", 3)
     statuses = [call({"consent": True, "image": SELFIE}, ip=f"198.51.100.{i}")[0] for i in range(4)]
     assert statuses == [200, 200, 200, 429]
+    assert call({"consent": True, "image": SELFIE}) == (429, {"error": app.TOO_MANY})
+
+
+def test_many_phones_behind_one_address_are_all_served(clients, monkeypatch, photo_ok):
+    # The venue's Wi-Fi: everyone arrives from the same IP.
+    assert all(call({"consent": True, "image": SELFIE})[0] == 200 for _ in range(60))
+    assert all(call(PHOTO)[0] == 200 for _ in range(30))  # photos from the phone too
+    assert list(clients["dynamodb"].counts.values()) == [90]  # one counter, for everyone, and nothing per caller
+
+
+def test_nothing_about_the_caller_is_kept(clients):
+    call({"consent": True, "image": SELFIE}, ip="203.0.113.7")
+    assert all(k.startswith("global#") for k in clients["dynamodb"].counts)
 
 
 def test_replies_cannot_be_framed(clients):
     event = {"requestContext": {"http": {"method": "GET"}}, "rawPath": "/"}
     headers = app.handler(event, None)["headers"]
     assert headers["x-frame-options"] == "DENY" and "frame-ancestors 'none'" in headers["content-security-policy"]
+
+
+PHOTO = {"consent": True, "image": SELFIE, "source": "file"}
+
+
+@pytest.fixture
+def photo_ok(monkeypatch):
+    monkeypatch.setattr(app, "PHOTO_OK", True)
+
+
+def test_a_photo_from_the_phone_only_where_the_event_allows_it(clients):
+    assert call(PHOTO) == (403, {"error": app.NO_PHOTO})
+    assert call({"consent": True, "image": SELFIE})[0] == 200  # the selfie is not affected
+
+
+def test_a_photo_from_the_phone_must_show_one_face(clients, photo_ok):
+    assert call(PHOTO) == (200, {"photos": ["a", "b"]})
+    clients["rekognition"] = FakeRekognition(faces=2)
+    assert call(PHOTO) == (400, {"error": app.ONE_FACE})
+    clients["rekognition"] = FakeRekognition(faces=1, faint=2)  # a blur in the background does not count
+    assert call(PHOTO) == (200, {"photos": ["a", "b"]})
+    clients["rekognition"] = FakeRekognition(faces=0, faint=1)
+    assert call(PHOTO) == (400, {"error": app.NO_FACE})
+
+
+def test_a_request_without_source_is_a_selfie(clients, photo_ok):
+    clients["rekognition"] = FakeRekognition(faces=2)
+    status, body = call({"consent": True, "image": SELFIE})
+    assert status == 200 and body["note"] == app.MANY_FACES
