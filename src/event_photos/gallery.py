@@ -20,7 +20,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from . import brand, preview, wall
+from . import brand, fun, preview, wall
 from .frames import FRAMES_DIR
 
 FRAME_FORMATS = ("feed", "story")
@@ -62,6 +62,7 @@ class GalleryPhoto:
     by: str = ""  # photographer's name, when the event has several
     score: float = 0.0  # the selection's quality score
     focus: tuple[float, float] = (.5, .5)  # middle of the faces, where a crop should center
+    faces: tuple[tuple[float, ...], ...] = ()  # face boxes, [x0, y0, x1, y1] fractions of the photo
 
 
 LOCAL_SUFFIX = ".local.json"  # event.local.json: gitignored values (removal contact, face_search on/off)
@@ -155,10 +156,12 @@ def build_gallery(run_dir: Path, site: Path, event: dict, clock_offset: dt.timed
         owner = owner_of(pid)
         taken = (dt.datetime.fromisoformat(r["capture_time"]) + clock_offset + offsets.get(owner, dt.timedelta())
                  if r["capture_time"] else None)
+        faces = (r.get("analysis") or {}).get("faces", [])
         photos.append(GalleryPhoto(pid, run_dir / "selected" / r["output"], taken,
                                    moment=moment_for(taken, event["moments"]),
                                    by=names.get(owner, "") if len(names) > 1 else "", score=r.get("score", 0.0),
-                                   focus=preview.faces_center((r.get("analysis") or {}).get("faces", []))))
+                                   focus=preview.faces_center(faces),
+                                   faces=tuple(tuple(round(v, 2) for v in f["box"]) for f in faces)))
     with ThreadPoolExecutor(workers) as pool:
         photos = list(pool.map(lambda p: _render_sizes(p, site, [d["key"] for d in designs]), photos))
     photos.sort(key=lambda p: (p.taken or dt.datetime.max, p.id))
@@ -166,7 +169,8 @@ def build_gallery(run_dir: Path, site: Path, event: dict, clock_offset: dt.timed
         print(f"aviso: {len(photos)} fotos sem \"schedule\" no evento — a galeria fica numa rolagem só, "
               "sem atalhos por momento")
 
-    preview.save(preview.home_card([(p.source, p.focus) for p in _showcase(photos)]), site / preview.HOME_CARD)
+    lines = (_date_pt(event["date"]), event.get("place", ""))
+    preview.save(preview.home_card([(p.source, p.focus) for p in _showcase(photos)], lines), site / preview.HOME_CARD)
     _photo_pages(site, event, photos)
     card = (site / preview.HOME_CARD).read_bytes()
     (site / "index.html").write_text(_page(event, photos, designs, card), encoding="utf-8")
@@ -294,16 +298,19 @@ def _swatch(key: str) -> str:
 
 
 def _modes(designs: list[dict]) -> str:
-    """One button per frame (with its sample when there are several), then the bare photo."""
+    """One button per frame (with its sample when there are several), the bare photo, then the fun version."""
     many = len(designs) > 1
     buttons = "".join(
         f'<button data-mode="{escape(d["key"])}" aria-pressed="{str(i == 0).lower()}">'
         + (f'{_swatch(d["key"])}<span>{escape(d["label"])}</span>' if many else "Com moldura") + "</button>"
         for i, d in enumerate(designs))
+    plain = "Sem moldura" if designs else "Foto"
     return (f'<div class="modes{" many" if many else ""}" role="group" aria-label="Moldura" '
-            f'style="--n:{len(designs) + 1}">{buttons}<button data-mode="photo" aria-pressed="false">'
-            + ('<span class="none" aria-hidden="true"></span><span>Sem moldura</span>' if many else "Sem moldura")
-            + "</button></div>")
+            f'style="--n:{len(designs) + 2}">{buttons}<button data-mode="photo" aria-pressed="{str(not designs).lower()}">'
+            + (f'<span class="none" aria-hidden="true"></span><span>{plain}</span>' if many else plain)
+            + '</button><button data-mode="fun" aria-pressed="false">'
+            + ('<span class="fun-sw" aria-hidden="true"><span class="ph"></span></span><span>Divertida</span>'
+               if many else "Divertida") + "</button></div>")
 
 
 FORMAT_LABELS = {"feed": "Post (4:5)", "story": "Story (9:16)"}
@@ -712,9 +719,9 @@ def _listing(event: dict, photos: list[GalleryPhoto]) -> tuple[dict[str, list], 
     # Tiles are built by TILES_JS from this list ("m" = section), so the page stays small with thousands of photos.
     section_of = {title: i for i, title in enumerate(groups)}
     data = [{"id": p.id, "m": section_of[p.moment], "w": p.width, "h": p.height, "f": list(p.frames),
-             "v": p.height > p.width, "a": alts[p.id], "c": p.by, "t": p.taken.strftime("%H:%M") if p.taken else ""}
+             "v": p.height > p.width, "a": alts[p.id], "c": p.by, "t": p.taken.strftime("%H:%M") if p.taken else "", "x": [list(f) for f in p.faces]}
             for p in photos]
-    moments = [{"t": starts.get(t, ""), "n": t} for t in groups]
+    moments = [{"t": starts.get(t, ""), "n": t, "g": fun.moment_group(t)} for t in groups]
     return groups, starts, data, moments
 
 
@@ -754,7 +761,7 @@ def _page(event: dict, photos: list[GalleryPhoto], designs: list[dict], card: by
 {_home_tags(event, photos, card)}
 <style>
 {brand.font_face(art["font"])}
-{brand.TOKENS}{PAGE_CSS}{FINDER_CSS if find_button else ""}
+{brand.TOKENS}{PAGE_CSS}{fun.CSS}{FINDER_CSS if find_button else ""}
 </style></head>
 <body>
 <header class="masthead"><img class="hex hex-l" src="{art["hex_left"]}" alt="" width="84" height="152">
@@ -779,6 +786,7 @@ def _page(event: dict, photos: list[GalleryPhoto], designs: list[dict], card: by
   <div class="controls">
     {_modes(designs)}
     {_formats(designs)}
+    <button class="btn reroll" hidden>Trocar stickers</button>
     <div class="actions"><button class="btn primary share" hidden>Salvar ou postar</button><a class="btn download" download>Baixar arquivo</a></div>
     <p class="tag"><button class="copy-tag send-link">Enviar link da foto</button></p>
     {tag}
@@ -792,6 +800,7 @@ let VIEW=PHOTOS; /* the photos the viewer walks through: all of them, or the fac
 const viewer=document.querySelector(".viewer"),stage=viewer.querySelector(".stage"),img=stage.querySelector("img"),
   failed=stage.querySelector(".failed"),count=viewer.querySelector(".count"),where=viewer.querySelector(".vm"),
   dl=viewer.querySelector(".download"),share=viewer.querySelector(".share"),modesBox=viewer.querySelector(".modes"),
+  reroll=viewer.querySelector(".reroll"),
   formatsBox=viewer.querySelector(".formats"),
   toast=document.querySelector(".toast"),toTop=document.querySelector(".to-top"),
   behind=[...document.querySelectorAll("header,nav,main,footer,.to-top,.found,.fresh-live")];
@@ -804,20 +813,27 @@ function hit(e,x){{try{{fetch("{BEACON}?"+new URLSearchParams({{e,...x,r:Math.ra
    post as stories). */
 function frameOf(p){{if(!p.f.length)return null;const pref=format||(p.v?"story":"feed");
   return p.f.includes(pref)?pref:p.f[0];}}
-function current(p){{const f=mode!=="photo"?frameOf(p):null,u=f+"/"+mode+"/"+p.id+".jpg";
+function current(p){{if(mode==="fun"&&funShot&&funShot.id===p.id)
+    return {{src:funShot.url,file:funShot.url,name:p.id+"-divertida.jpg"}};
+  const f=mode!=="photo"&&mode!=="fun"?frameOf(p):null,u=f+"/"+mode+"/"+p.id+".jpg";
   return f?{{src:u,file:u,name:p.id+"-"+mode+"-"+f+".jpg"}}
   :{{src:"view/"+p.id+".webp",file:"photos/"+p.id+".jpg",name:p.id+".jpg"}};}}
 /* What the visitor took: f = the frame design ("" for the plain photo), m = post, story or the plain photo. */
-function what(p){{const f=p.f.length&&mode!=="photo"?frameOf(p):null;return {{id:p.id,f:f?mode:"",m:f||"photo"}};}}
+function what(p){{if(mode==="fun")return {{id:p.id,f:"fun",m:"fun"}};
+  const f=p.f.length&&mode!=="photo"?frameOf(p):null;return {{id:p.id,f:f?mode:"",m:f||"photo"}};}}
 function say(text){{toast.textContent=text;toast.classList.add("show");clearTimeout(toastTimer);
   toastTimer=setTimeout(()=>toast.classList.remove("show"),3500);}}
 function show(i){{
   index=(i+VIEW.length)%VIEW.length;const p=VIEW[index],c=current(p),mo=MOMENTS[p.m];
-  modesBox.hidden=!p.f.length;modes.forEach(b=>b.setAttribute("aria-pressed",b.dataset.mode===(p.f.length?mode:"photo")));
-  if(formatsBox){{const f=frameOf(p);formatsBox.hidden=mode==="photo"||p.f.length<2;
+  const on=mode==="fun"?"fun":p.f.length?mode:"photo";  /* a photo without frames still has the fun version */
+  modes.forEach(b=>{{b.hidden=!p.f.length&&b.dataset.mode!=="photo"&&b.dataset.mode!=="fun";
+    b.setAttribute("aria-pressed",b.dataset.mode===on);}});
+  modesBox.style.setProperty("--n",modes.filter(b=>!b.hidden).length);reroll.hidden=mode!=="fun";
+  if(formatsBox){{const f=frameOf(p);formatsBox.hidden=mode==="photo"||mode==="fun"||p.f.length<2;
     formats.forEach(b=>b.setAttribute("aria-pressed",b.dataset.format===f));}}
   failed.hidden=true;stage.classList.add("loading");img.alt=p.a;img.src=c.src;
   if(img.complete&&img.naturalWidth)stage.classList.remove("loading");
+  if(mode==="fun"&&!(funShot&&funShot.id===p.id))funShow(p);
   dl.href=c.file;dl.setAttribute("download",c.name);
   const thumb="url("+JSON.stringify("thumbs/"+p.id+".webp")+")";
   modesBox.querySelectorAll(".ph,.none").forEach(e=>e.style.backgroundImage=thumb);
@@ -827,7 +843,7 @@ function show(i){{
   history.replaceState({{viewer:1}},"","#foto="+p.id);
   if(p.id!==seen){{seen=p.id;hit("photo",{{id:p.id}});}}
 }}
-img.onload=()=>stage.classList.remove("loading");
+img.onload=()=>{{if(!(mode==="fun"&&!(funShot&&funShot.id===VIEW[index].id)))stage.classList.remove("loading");}};
 img.onerror=()=>{{stage.classList.remove("loading");failed.hidden=false;}};
 function open(id,push){{lastFocus=document.activeElement;
   if(push)history.pushState({{viewer:1}},"","#foto="+id);
@@ -841,6 +857,7 @@ addEventListener("popstate",()=>{{const m=location.hash.match(/^#foto=(.+)$/);
   if(m&&!viewer.classList.contains("open"))open(decodeURIComponent(m[1]),false);
   else if(!m&&viewer.classList.contains("open"))hide();}});
 {NEW_JS}
+{fun.script(_date_pt(event["date"]), event.get("place", ""))}
 {TILES_JS}
 {NOW_JS}
 {FRESH_JS}

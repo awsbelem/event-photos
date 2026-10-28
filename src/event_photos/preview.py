@@ -11,7 +11,7 @@ from html import escape
 from pathlib import Path
 from urllib.parse import quote
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from . import brand
 
@@ -21,6 +21,8 @@ PAGE_DIR = "p"  # p/<id>.html
 CARD = (1200, 630)
 QUALITY = 80
 _BRAND = brand.ROOT / "brand" / "cd-norte"
+_FONTS = _BRAND / "fonts"  # IBM Plex Sans, the artwork's typeface
+_ORANGE = "#fb8617"
 
 
 def photo_url(photo_id: str) -> str:
@@ -67,17 +69,35 @@ def photo_card(source: Path) -> Image.Image:
     return card
 
 
-def home_card(photos: list[tuple[Path, tuple[float, float]]]) -> Image.Image:
-    """The event's artwork and logo beside up to three photos of the day (one large, two below it)."""
+def home_card(photos: list[tuple[Path, tuple[float, float]]], lines: tuple[str, str] = ("", "")) -> Image.Image:
+    """The event's logo, date and place over its Belém artwork, beside up to three photos (one large, two below it).
+
+    `lines` is (date, place): the date in orange to catch the eye, the place in white to be read.
+    """
     card = Image.new("RGB", CARD, brand.NAVY)
     m, gap = 24, 16
-    hexes = Image.open(_BRAND / "hexB.png").convert("RGBA")  # the artwork's bottom-left corner piece
-    hexes.thumbnail((300, 300), Image.LANCZOS)
-    card.paste(hexes, (0, CARD[1] - hexes.height), hexes)
+    left = 440 if photos else CARD[0]
+    sky = Image.open(brand.ROOT / "web" / "skyline.webp").convert("RGB")  # navy on top, so it fades into the card
+    window = min(sky.width, round(left * 1.6))  # the sun and the cathedral's tower, centered
+    x0 = min((sky.width - window) // 2 + 20, sky.width - window)
+    sky = sky.crop((x0, 0, x0 + window, sky.height))
+    sky = sky.resize((left, round(sky.height * left / sky.width)), Image.LANCZOS)
+    card.paste(sky, (0, CARD[1] - sky.height))
     logo = Image.open(_BRAND / "logo.png").convert("RGBA")
     logo.thumbnail((360, 360), Image.LANCZOS)
-    left = 440 if photos else CARD[0]
-    card.paste(logo, ((left - logo.width) // 2, 150), logo)
+    card.paste(logo, ((left - logo.width) // 2, 44), logo)
+    draw, y = ImageDraw.Draw(card), 44 + logo.height + 26
+    for text, font, size, color in zip(lines, ("Bold", "Regular"), (24, 22), (_ORANGE, "#ffffff")):
+        if text:
+            draw.text((left // 2, y), text, font=ImageFont.truetype(str(_FONTS / f"IBMPlexSans-{font}.ttf"), size),
+                      fill=color, anchor="mt")
+            y += 34
+    art = Image.open(_BRAND / "belem.png").convert("RGBA")  # white line drawing, kept faint as a texture
+    ground = CARD[1] - sky.height
+    if ground - y - 16 >= 120:  # only where there's room for it to read as Belém
+        art.thumbnail((360, ground - y - 16), Image.LANCZOS)
+        art.putalpha(art.getchannel("A").point(lambda v: round(v * .3)))
+        card.paste(art, ((left - art.width) // 2, ground - art.height), art)
     if not photos:
         return card
     x, w, h = left, CARD[0] - left - m, CARD[1] - 2 * m

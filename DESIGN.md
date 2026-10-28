@@ -235,6 +235,10 @@ A deep-navy night with two hot accents taken from the event's own agenda: AWS or
 
 **The Nova Marker Rule.** "Nova" is the one orange tag. Tags are otherwise violet, but "Nova" calls ("look here, this just arrived"), so it takes the calling color with navy text, the same on gallery tiles and the venue screen. It sits on a tile's corner or inline before the moment title, never above a heading, and it leaves once the photo has been seen.
 
+**The Party Border Rule.** The bright sticker palette lives only inside the fun version's image. The viewer chrome around it stays navy, ink and orange, and no sticker color becomes a page token.
+
+**The Kind Sticker Rule.** Anyone can put stickers on anyone's photo, so a sticker praises the people in it or talks about the event, never about how someone looks, and it never covers a face.
+
 **The Plum Stays Framed Rule.** The cd-norte plum kit (`assets/brand/cd-norte/brand.json`: plum #42314B, lavender cards, sunset gradients, IBM Plex Sans, Permanent Marker) lives only inside the photo frames, by the user's decision. The page around the frames uses the agenda palette above and never borrows a plum token.
 
 ## Typography
@@ -355,6 +359,9 @@ The gallery's cover, live: the masthead artwork frames one photo of the day at a
 - **Empty state:** the stage keeps its place and shows an outline hexagon node (7u, orange on navy) over "As fotos do dia aparecem aqui" in muted text.
 - **Motion:** each photo crossfades in over 1.2s; the caption fades out (0.4s), changes, fades back, and its node pops to 1.18× for 380ms, as a timeline node does when lit. All on `cubic-bezier(.16,1,.3,1)`. Under reduced motion every transition is off and photos simply replace each other.
 - **Rhythm:** a photo every 8s (adjustable); photos that arrived since the last minute's check come first, then every photo once in a shuffled round before any repeats.
+
+### Fun Version ("Divertida")
+A third choice in the viewer's frame chooser, after "Sem moldura", with a pink swatch and a yellow star. The browser draws it on a canvas from `view/<id>.webp` and nothing is stored: a 5% border in one bright color (pink #ff4fa3, yellow #ffd23f, cyan #23d5e6, lime #a6e22e, orange #fb8617, violet #8b7bff) sprinkled with confetti, the photo with 0.5-border rounded corners, a navy band filling the deeper bottom border (the logo; the date in orange Inter 700 over the place in white Inter 500; the Belém line drawing at 60% white; the skyline at the right end, its sun kept in view and its left edge fading into the navy), and two or three stickers. The text shrinks a little before the drawing is dropped; on a narrow photo the skyline gives up its cranes first. Stickers are burst (texts up to 8 characters), pill or speech bubble (its tail points at the people), filled in the other bright colors with navy Inter 800 text, a thick white outline and a soft drop shadow, tilted up to ±10°. "Trocar stickers" (a secondary button) draws a new set. This is the one place the page leaves the agenda palette, on purpose (The Party Border Rule).
 
 ### Site Icon
 One isometric cube from the masthead's top-right artwork inside its orange pointy-top hexagon ring, on navy. The browser-tab icon (16 and 32px) sits on a navy plate rounded at 22%; the home-screen icon (180px) is square and opaque, since the phone rounds it itself. The cube is redrawn at icon size, not cut from the raster, because the artwork's cube cannot be read at 16px; its three faces keep the colors sampled from `assets/web/hex-right.webp` (#43395e top, #373153 right, #122038 left), which appear nowhere else.

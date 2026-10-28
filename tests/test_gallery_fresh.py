@@ -23,7 +23,7 @@ def test_the_photo_list_is_published_beside_the_page_with_the_same_photos(tmp_pa
     html = build_gallery(run_dir(tmp_path), site, dict(EVENT)).read_text()
     listed = json.loads((site / PHOTO_LIST).read_text())
     assert [p["id"] for p in listed["photos"]] == ["a", "b"] and listed["at"]
-    assert listed["moments"] == [{"t": "", "n": "Outros momentos"}]
+    assert listed["moments"] == [{"t": "", "n": "Outros momentos", "g": ""}]
     assert all(f'"id":"{p}"' in html for p in ("a", "b"))  # the page still carries its list: no extra request to open
 
 
