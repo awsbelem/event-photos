@@ -27,12 +27,15 @@ STICKERS = {
     "moments": {
         "arrive": ["CHEGUEI!", "CRACHÁ OK", "BORA COMEÇAR!"],
         "learn": ["MODO APRENDIZADO", "ANOTA ESSA!", "INSPIRADO"],
-        "pause": ["CAFÉ + CLOUD", "PAUSA MERECIDA", "RECARREGANDO"],
+        "pause": ["CAFÉ + CLOUD", "PAUSA MERECIDA", "RECARREGANDO", "TÔ BROCADO!"],
         "close": ["VALEU, BELÉM!", "ATÉ O PRÓXIMO!", "FECHOU!"],
     },
     "faces": {"1": ["PROTAGONISTA", "BRILHOU"], "2": ["DUPLA DE PESO", "PARCERIA"],
               "3": ["SQUAD", "TIME BOM", "A GALERA!"]},
-    "para": ["ÉGUA!", "PAI D'ÉGUA!", "AMO BELÉM", "AÇAÍ & CLOUD", "TACACÁ DEPLOY"],
+    # Paraense sayings that praise or marvel. Left out: the ones that tease or brush someone off (pavulagem, mufino,
+    # pitiú, liso, ralado, mangar, arreda, te sai, mas quando, disque) and mermão/mermã, which guesses a gender.
+    "para": ["ÉGUA!", "PAI D'ÉGUA!", "MARRAPAZ!", "DI ROCHA!", "SÓ O CREME!", "AMO BELÉM", "AÇAÍ & CLOUD",
+             "TACACÁ DEPLOY"],
     "community": ["CLOUD MOOD", "DEPLOY DE ALEGRIA", "100% UPTIME", "#CDNORTE"],
 }
 LOGO_WIDTH = 440  # px, drawn on the navy band in the bottom border
@@ -129,15 +132,24 @@ function funSticker(c,s,size){
   c.restore();
 }
 const funHits=(a,b)=>a[0]<b[2]&&b[0]<a[2]&&a[1]<b[3]&&b[1]<a[3];
+/* Everything a sticker paints, as a box around (x, y): its shape tilted by its rotation, the white outline, the
+   bubble's tail (on the side facing the people, `down` when they are below) and a little air. */
+function funBox(s,x,y,down,size){
+  const o=size*.34/2+size*.25,cos=Math.abs(Math.cos(s.rot)),sin=Math.abs(Math.sin(s.rot));
+  const hw=s.w/2+o,hh=s.h/2+o,tail=s.shape==="bubble"?s.h*.55:0;
+  const ex=cos*hw+sin*(hh+tail),ey=sin*hw+cos*hh;
+  return [x-ex,y-ey-(down?0:cos*tail),x+ex,y+ey+(down?cos*tail:0)];
+}
 /* Beside the faces, never over them: random spots, the ones touching a face or another sticker dropped, the
    closest to the people kept (with some luck mixed in, so "Trocar" really changes things). */
 function funPlace(s,faces,taken,area,size){
   const fx=faces.length?[Math.min(...faces.map(f=>f[0])),Math.min(...faces.map(f=>f[1])),
     Math.max(...faces.map(f=>f[2])),Math.max(...faces.map(f=>f[3]))]:null;
   let best=null;
-  for(let i=0;i<160;i++){
-    const x=area[0]+s.w/2+Math.random()*(area[2]-area[0]-s.w),y=area[1]+s.h/2+Math.random()*(area[3]-area[1]-s.h);
-    const box=[x-s.w*.55,y-s.h*.55,x+s.w*.55,y+s.h*.55];
+  for(let i=0;i<400;i++){
+    const x=area[0]+Math.random()*(area[2]-area[0]),y=area[1]+Math.random()*(area[3]-area[1]);
+    const down=fx?(fx[1]+fx[3])/2>=y:true,box=funBox(s,x,y,down,size);
+    if(box[0]<area[0]||box[1]<area[1]||box[2]>area[2]||box[3]>area[3])continue;
     if(faces.some(f=>funHits(box,f))||taken.some(t=>funHits(box,t)))continue;
     const d=fx?Math.hypot(Math.max(fx[0]-x,0,x-fx[2]),Math.max(fx[1]-y,0,y-fx[3]))
       :Math.min(Math.hypot(x-area[0],y-area[1]),Math.hypot(x-area[2],y-area[1]),Math.hypot(x-area[0],y-area[3]),
@@ -191,11 +203,15 @@ async function funMake(p){
     c.fill();}
   c.save();c.beginPath();funRound(c,B,B,W,H,B*.5);c.clip();c.drawImage(im,B,B);c.restore();
   const ly=funBand(c,B,H+B+BB*.08,W,BB*.84,logo,belem,sky);
-  const size=Math.round(short*.058),grow=s=>[s[0]*W+B-W*.02,s[1]*H+B-H*.03,s[2]*W+B+W*.02,s[3]*H+B+H*.03];
+  /* The detector boxes the face tightly (brows to chin): grow it to cover hair, ears and chin. */
+  const size=Math.round(short*.058),grow=f=>{const fw=(f[2]-f[0])*W,fh=(f[3]-f[1])*H;
+    return [f[0]*W+B-fw*.35,f[1]*H+B-fh*.6,f[2]*W+B+fw*.35,f[3]*H+B+fh*.35];};
   const faces=(p.x||[]).map(grow),area=[B*.4,B*.4,cv.width-B*.4,H+B*1.4];
   const taken=[[B-size,ly-size,B+W+size,cv.height]];  /* the band stays in sight */
   funTexts(p).forEach((t,i)=>{const s=funShape(c,t,size);s.color=colors[i%colors.length];
-    s.rot=(Math.random()-.5)*.35;if(funPlace(s,faces,taken,area,size))funSticker(c,s,size);});
+    s.rot=(Math.random()-.5)*.35;if(funPlace(s,faces,taken,area,size))funSticker(c,s,size);
+    else{const t2=funShape(c,t,size*.8);Object.assign(t2,{color:s.color,rot:s.rot});  /* no room: one size down */
+      if(funPlace(t2,faces,taken,area,size*.8))funSticker(c,t2,size*.8);}});
   const blob=await new Promise(ok=>cv.toBlob(ok,"image/jpeg",.9));
   if(!blob)throw new Error("canvas");
   return URL.createObjectURL(blob);

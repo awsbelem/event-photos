@@ -31,7 +31,9 @@ def test_schedule_titles_pick_their_stickers():
 def test_no_sticker_talks_about_how_someone_looks():
     texts = [t for group in (*STICKERS["moments"].values(), *STICKERS["faces"].values(),
                              STICKERS["para"], STICKERS["community"]) for t in group]
-    assert texts and not any(w in t.lower() for t in texts for w in ("bocão", "soninho", "careca", "feio", "dormi"))
+    assert texts and not any(w in t.lower() for t in texts for w in ("bocão", "soninho", "careca", "feio", "dormi",
+                                                                      "pavulagem", "mufino", "pitiú", "liso", "ralado",
+                                                                      "mangar", "arreda", "te sai", "disque"))
     assert all("♥" not in t and "✓" not in t for t in texts)  # glyphs the page's Inter subset lacks
 
 
