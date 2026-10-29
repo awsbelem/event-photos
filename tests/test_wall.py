@@ -76,4 +76,4 @@ def test_a_qr_made_elsewhere_is_shown_as_it_is(tmp_path):
     plate = html.split('class="qr"')[1][:200]
     assert '<img src="data:image/png;base64,' in plate and "<svg" not in plate
     assert base64.b64encode(qr.read_bytes()).decode()[:80] in html
-    assert "aws-belem.woox.be/day" in html and "d123.cloudfront.net" not in html
+    assert '<p class="address">https://aws-belem.woox.be/day</p>' in html and "d123.cloudfront.net" not in html

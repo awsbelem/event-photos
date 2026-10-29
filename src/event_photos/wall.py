@@ -82,8 +82,7 @@ body.idle,body.idle *{cursor:none}
 .qr svg,.qr img{display:block;width:100%;height:100%}
 .call{margin:0;font-size:calc(var(--u)*3.6);font-weight:800;letter-spacing:-.02em;line-height:1.1}
 .how{margin:calc(var(--u)*.7) 0 0;color:var(--muted);font-size:calc(var(--u)*2.2);font-weight:600}
-.address{margin:calc(var(--u)*1.2) 0 0;color:var(--ink);font-size:calc(var(--u)*2.2);font-weight:700;
-  font-variant-numeric:tabular-nums}
+.address{margin:calc(var(--u)*1.2) 0 0;color:var(--ink);font-size:calc(var(--u)*2.2);font-weight:700}
 .go{position:absolute;left:50%;bottom:calc(var(--u)*24);transform:translateX(-50%);z-index:2;min-height:52px;
   border:0;border-radius:12px;padding:0 22px;background:var(--orange);color:var(--navy);font:700 16px/1 FONT;
   cursor:pointer;box-shadow:0 8px 24px #0009;transition:opacity .3s}
@@ -156,7 +155,7 @@ def page(event: dict, photo_list: str, beacon: str, icons: tuple[str, str]) -> s
     art = brand.assets()
     # A short link (event.json "short_url") makes a sparser QR, readable from farther away, and is easier to type.
     url = event.get("short_url") or event.get("url") or ""
-    address = url.split("://", 1)[-1].rstrip("/")  # what a visitor types: the host, without https://
+    address = url.rstrip("/")  # with https://, so it reads as a link to type
     if event.get("wall_qr"):  # made and redirected elsewhere: shown as it is, whatever address the event has
         qr_uri = f"data:image/png;base64,{base64.b64encode(Path(event['wall_qr']).read_bytes()).decode()}"
         qr = f'<div class="qr"><img src="{qr_uri}" alt="QR code da galeria"></div>'
