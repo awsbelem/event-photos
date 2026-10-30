@@ -268,8 +268,11 @@ def photographers(args: argparse.Namespace) -> None:
 def inbox_cmd(args: argparse.Namespace) -> None:
     inbox = _event_inbox(args.slug)
     if args.action == "deploy":
-        inbox.deploy(load_event(EVENTS_DIR / args.slug / "event.json")["name"])
-        print(f"página de envio atualizada → {inbox.url}")
+        # The next event's address comes from its stack at deploy time, so it is never written to the repository.
+        moved_to = _event_inbox(args.to).url if args.to else ""
+        inbox.deploy(load_event(EVENTS_DIR / args.slug / "event.json")["name"], moved_to)
+        print(f"página de envio de {args.slug} agora leva à de {args.to} → {moved_to}" if args.to
+              else f"página de envio atualizada → {inbox.url}")
     else:
         uploads, names = inbox.pull(EVENTS_OUT / args.slug / "uploads")
         print(f"{len(uploads)} fotos recebidas → {EVENTS_OUT / args.slug / 'uploads'}")
@@ -402,6 +405,8 @@ def main() -> None:
     ib = sub.add_parser("inbox", help="atualiza a página de envio ou baixa as fotos recebidas")
     ib.add_argument("slug", help="pasta em events/ com o event.json")
     ib.add_argument("action", choices=["deploy", "pull"])
+    ib.add_argument("--to", metavar="EVENTO", help="deploy: leva quem abrir esta página à página de envio de outro "
+                                                   "evento (sem --to, volta a ser a página deste)")
     ib.set_defaults(func=inbox_cmd)
 
     fs = sub.add_parser("face-search", help="liga, desliga, apaga ou mostra a busca por rosto do evento")

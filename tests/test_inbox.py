@@ -147,3 +147,21 @@ def test_deployed_page_wears_the_event_artwork():
     html = namespace["page"]()
     assert "data:font/woff2;base64," in html and 'class="logo"' in html and "__" not in html
     assert brand.TOKENS.removesuffix("}").removeprefix(":root{") in inbox_app.PAGE  # same colors as the gallery
+
+
+def test_moved_page_sends_everyone_to_the_next_event(app, monkeypatch):
+    monkeypatch.setattr(inbox_app, "MOVED_TO", "https://next.example/")
+    reply = inbox_app.handler({"requestContext": {"http": {"method": "GET"}}, "rawPath": "/"}, None)
+    assert reply["statusCode"] == 302 and reply["headers"]["location"] == "https://next.example/"
+    reply = app("/sign", {"code": "ABCD-EFGH", "name": "a.jpg", "size": 10, "modified": 1})
+    assert reply["statusCode"] == 410 and "Recarregue" in json.loads(reply["body"])["error"]
+
+
+def test_deployed_source_carries_where_it_moved():
+    from event_photos.inbox import app_source
+    namespace = {}
+    exec(compile(app_source("Treino", "https://next.example/"), "index.py", "exec"), namespace)
+    assert namespace["MOVED_TO"] == "https://next.example/"
+    namespace = {}
+    exec(compile(app_source("Treino"), "index.py", "exec"), namespace)
+    assert namespace["MOVED_TO"] == ""

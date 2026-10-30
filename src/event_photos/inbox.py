@@ -26,11 +26,12 @@ DATED_SUFFIX = "-dated"  # uploads-dated/: copies of EXIF-less uploads, dated fr
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L: codes are read aloud and typed on phones
 
 
-def app_source(event_name: str) -> str:
-    """The upload page's Lambda code with the event's name and artwork baked in (the page shows both)."""
+def app_source(event_name: str, moved_to: str = "") -> str:
+    """The upload page's Lambda code with the event's name and artwork baked in (the page shows both), and,
+    once the event is over, the upload page every request is sent to instead."""
     art = brand.assets()
     source = APP.read_text(encoding="utf-8")
-    for line, value in (('EVENT_NAME = ""', event_name), ("BRAND: dict = {}", art)):
+    for line, value in (('EVENT_NAME = ""', event_name), ("BRAND: dict = {}", art), ('MOVED_TO = ""', moved_to)):
         if line not in source:
             raise RuntimeError(f"{APP.name}: {line} not found")
         name = line.split(" ")[0].rstrip(":")
@@ -120,10 +121,10 @@ class Inbox:
             self.save(config)
         return gone
 
-    def deploy(self, event_name: str = "") -> None:
+    def deploy(self, event_name: str = "", moved_to: str = "") -> None:
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-            z.writestr("index.py", app_source(event_name))
+            z.writestr("index.py", app_source(event_name, moved_to))
         with tempfile.NamedTemporaryFile(suffix=".zip") as f:
             f.write(buf.getvalue())
             f.flush()

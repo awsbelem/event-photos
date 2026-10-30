@@ -1,6 +1,6 @@
 """Upload inbox, deployed as the stack's Lambda (`index.py`; stdlib + boto3 only, nothing from this package).
 
-GET /        the upload page (user-facing, so in Portuguese)
+GET /        the upload page (user-facing, so in Portuguese); a redirect when the event has moved on (MOVED_TO)
 POST /check  {"code"} → the photographer's name, or 403
 POST /sign   {"code", "name", "size", "modified"} → a signed S3 form for that one file
 
@@ -19,6 +19,7 @@ from html import escape
 BUCKET = os.environ.get("INBOX_BUCKET", "")
 EVENT_NAME = ""  # written into the deployed copy by `event-photos inbox <slug> deploy`
 BRAND: dict = {}  # same: the event artwork as data URIs ("font", "logo", "hex_left", "hex_right"), from brand.py
+MOVED_TO = ""  # same, with --to: the next event's upload page, where an old link now leads
 LOGO_ALT = "AWS Community Day Brasil — Edição Norte · Belém/PA"
 CONFIG_KEY = "_config/photographers.json"
 EXTENSIONS = {".jpg", ".jpeg", ".heic", ".heif", ".png", ".dng"}
@@ -39,6 +40,11 @@ def _client():
 def handler(event, context):
     method = event.get("requestContext", {}).get("http", {}).get("method", "GET")
     path = event.get("rawPath", "/")
+    if MOVED_TO:
+        if method == "GET":
+            return {"statusCode": 302, "body": "", "headers": {"location": MOVED_TO, "cache-control": "no-store"}}
+        # A page left open before the move: reloading it follows the redirect.
+        return _reply(410, {"error": "Os envios agora vão para outra página. Recarregue esta página."})
     if method == "GET" and path == "/":
         return _reply(200, page(), "text/html; charset=utf-8")
     if method != "POST" or path not in ("/check", "/sign"):

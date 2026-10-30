@@ -127,6 +127,7 @@ face search.)
 
 ```bash
 uv run event-photos inbox <slug> deploy                        # once per event and after editing inbox_app.py
+uv run event-photos inbox <slug> deploy --to <next>            # event over: its page now leads to <next>'s
 uv run event-photos photographers <slug> add "Ana Souza"       # prints the code and the page link
 uv run event-photos photographers <slug> add-file team.txt     # one name per line; known names are skipped
 uv run event-photos photographers <other> copy <slug>          # same codes on another event
